@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      0.6.0
+// @version      0.7.1
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js
@@ -56,10 +56,12 @@
     baselined: GM_getValue('baselined', false),
     baselineAt: GM_getValue('baselineAt', null),   // ISO stamp shared by every name in the first poll
     alerts: Object.assign(
-      { sound: true, discord: '', desktop: false, threshold: 'moderate', streamers: true },   // threshold: 'moderate' (orange+red) or 'severe' (red only)
+      { sound: true, discord: '', desktop: false, severe: true, moderate: true, streamers: true },
       GM_getValue('alerts', {}),
     ),
   };
+  // older versions stored a single threshold; carry it over once
+  if (state.alerts.threshold) { state.alerts.moderate = state.alerts.threshold === 'moderate'; delete state.alerts.threshold; }
   const save = () => {
     GM_setValue('seen', state.seen);
     GM_setValue('cache', state.cache);
@@ -105,6 +107,9 @@
       background:#141920;border-bottom:1px solid #222a34}
     .brand{font-weight:700;font-size:14px;letter-spacing:.02em;white-space:nowrap}
     .brand b{color:#7fb7ff;font-weight:700}
+    .ver{margin-left:8px;font-size:11px;font-weight:500;color:#6f7986;text-decoration:none;padding:1px 6px;border-radius:999px;border:1px solid #2a3340;vertical-align:middle}
+    .ver:hover{color:#e6e4dd;border-color:#3a4454}
+    .ver.stale{color:#e6b85c;border-color:#6b4a1a;background:#3a2d12}
     .status{color:#8a93a0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
     .status .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#2f9e63;margin-right:6px;vertical-align:middle}
     .status .dot.err{background:#d6453d}
@@ -145,16 +150,19 @@
     .chk input:checked{background:#2f9e63;border-color:#2f9e63}
     .chk input:checked::after{content:"";position:absolute;left:4px;top:1px;width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
     .row-ctl{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+    .stack{display:grid;gap:6px}
     .toggle{display:flex;align-items:center;gap:6px;color:#8a93a0;font-size:12px;white-space:nowrap;cursor:pointer;user-select:none}
     .toggle input{all:unset;width:28px;height:16px;border-radius:999px;background:#2a3340;position:relative;transition:background .15s;cursor:pointer}
     .toggle input::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#8a93a0;transition:left .15s,background .15s}
     .toggle input:checked{background:#2f9e63}
     .toggle input:checked::after{left:14px;background:#fff}
-    .list{padding:14px 16px 40px;max-width:980px}
-    .section{display:flex;align-items:baseline;gap:8px;color:#6f7986;font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin:6px 0 10px}
+    .list,.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:8px;align-content:start}
+    .list{padding:14px 16px 40px}
+    .grid{grid-column:1/-1}
+    .section{grid-column:1/-1;display:flex;align-items:baseline;gap:8px;color:#6f7986;font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin:6px 0 2px}
     .section span{color:#4c5663}
-    .empty{color:#6f7986;padding:28px 0;font-size:13px}
-    .row{display:grid;grid-template-columns:40px 1fr auto;gap:12px;align-items:center;padding:10px 12px 10px 10px;margin-bottom:6px;
+    .empty{grid-column:1/-1;color:#6f7986;padding:28px 0;font-size:13px}
+    .row{display:grid;grid-template-columns:40px 1fr auto;gap:12px;align-items:center;padding:10px 12px 10px 10px;min-width:0;
       border-radius:8px;background:#141920;border:1px solid #1d2531;border-left:3px solid #3a4454}
     .row.clean{border-left-color:#2f9e63}
     .row.light{border-left-color:#c9a227}
@@ -172,7 +180,8 @@
     .row.light .rep{color:#d7b545}
     .row.moderate .rep{color:#eb9150}
     .row.severe .rep{color:#ef6b63;font-weight:600}
-    .meta{display:flex;flex-wrap:wrap;gap:4px 6px;margin-top:5px;align-items:center}
+    .meta{display:flex;flex-wrap:wrap;gap:4px 6px;margin-top:5px;align-items:center;min-width:0}
+    .social{overflow:hidden;text-overflow:ellipsis;max-width:100%}
     .tag{font-size:11px;line-height:18px;height:18px;padding:0 7px;border-radius:4px;background:#1f2733;color:#aeb7c2;white-space:nowrap}
     .tag.amber{background:#3a2d12;color:#e6b85c}
     .tag.green{background:#143426;color:#6fcf97}
@@ -232,8 +241,14 @@
         if (!m) return;
         const latest = m[1];
         const installedFromLink = !!(GM_info && GM_info.scriptUpdateURL);
-        if (cmpVersion(latest, MY_VERSION) > 0) showUpdateBanner(latest, installedFromLink);
-        else if (!installedFromLink) showUpdateBanner(null, false);
+        if (cmpVersion(latest, MY_VERSION) > 0) {
+          showUpdateBanner(latest, installedFromLink);
+          if (versionEl) { versionEl.textContent = `v${MY_VERSION} · ${latest} available`; versionEl.classList.add('stale'); }
+        } else if (!installedFromLink) {
+          showUpdateBanner(null, false);
+        } else if (versionEl) {
+          versionEl.title = 'Up to date. Click to reinstall through Tampermonkey.';
+        }
       },
     });
   }
@@ -385,7 +400,7 @@
   }
 
   function meetsThreshold(cls) {
-    return cls === 'severe' || (cls === 'moderate' && state.alerts.threshold === 'moderate');
+    return (cls === 'severe' && state.alerts.severe) || (cls === 'moderate' && state.alerts.moderate);
   }
   async function fireAlerts(gt, rep) {
     const cls = repClass(rep);
@@ -399,7 +414,7 @@
     }
   }
 
-  let listEl, statusEl, nameBox, panelEl;
+  let listEl, statusEl, nameBox, panelEl, versionEl;
   function setView(v) { session.setView(v); }
 
   function buildAlertsPanel() {
@@ -440,11 +455,6 @@
     };
     twTest.addEventListener('click', runTw);
     twBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') runTw(); });
-    const thr = h('select', {},
-      h('option', { value: 'moderate' }, 'Orange and red (moderate or worse)'),
-      h('option', { value: 'severe' }, 'Red only (severe or banned accounts)'));
-    thr.value = a.threshold;
-    thr.addEventListener('change', () => { a.threshold = thr.value; save(); });
 
     const testMsg = h('div', { class: 'fld-h' });
     const fakeRep = { severe_count: 1, banned_xuids: ['test'], manual_tags: [{ tooltip: 'Test alert' }], profile_id: null };
@@ -464,8 +474,11 @@
 
     panelEl = h('div', { class: 'panel', style: 'display:none' },
       h('div', { class: 'panel-t' }, 'Alerts'),
-      field('Trigger on', thr),
-      field('Streamers', check('streamers', 'Alert when a player with a linked Twitch channel is live right now (purple pill links to the stream)'), 'Checked against Twitch when they appear and every 5 minutes while on the Recent board. Offline streamers just show their Twitch link.'),
+      field('Alert on', h('div', { class: 'stack' },
+        check('severe', 'Red: severe flags or banned accounts'),
+        check('moderate', 'Orange: moderate flags'),
+        check('streamers', 'Purple: streamer with a linked Twitch channel who is live right now'),
+      ), 'Any mix. Untick the first two for a Twitch-only watch. Streamers are checked against Twitch when they appear and every 5 minutes while on the Recent board; offline streamers just show their Twitch link.'),
       field('', h('div', { class: 'row-ctl' }, twBox, twTest, twMsg), 'Type any Twitch channel to test the live check. A live one also fires the streamer alert.'),
       field('Sound', h('div', { class: 'row-ctl' }, check('sound', 'Play a chime in this tab (works with the game in front, no permissions needed)'), soundTest)),
       field('Discord', h('div', { class: 'row-ctl wide' }, webhook, showBtn, discordTest, discordMsg), 'Paste a webhook URL for a private channel. Flagged players get posted there with the rep and a profile link.'),
@@ -496,8 +509,9 @@
     const tabHistory = h('button', { class: 'tab', onclick: () => setView('history') }, 'History');
     session.setView = (v) => { session.view = v; tabRecent.classList.toggle('on', v === 'recent'); tabHistory.classList.toggle('on', v === 'history'); render(); };
 
+    versionEl = h('a', { class: 'ver', href: RAW_URL, target: '_blank', rel: 'noopener', title: 'Click to update or reinstall through Tampermonkey' }, 'v' + MY_VERSION);
     const bar = h('div', { class: 'bar' },
-      h('div', { class: 'brand' }, 'SOTREP ', h('b', {}, 'Live')),
+      h('div', { class: 'brand' }, 'SOTREP ', h('b', {}, 'Live'), versionEl),
       h('div', { class: 'tabs' }, tabRecent, tabHistory),
       statusEl,
       h('div', { class: 'search' }, nameBox, h('button', { onclick: checkName }, 'Check')),
@@ -591,7 +605,7 @@
       listEl.append(renderRow(gt, true));
     }
     if (baseline.length) {
-      const body = h('div', {});
+      const body = h('div', { class: 'grid' });
       const fill = () => { body.replaceChildren(); for (const [gt] of baseline.sort((a, b) => a[0].localeCompare(b[0]))) body.append(renderRow(gt, true)); };
       const apply = () => { body.style.display = session.foldOpen ? '' : 'none'; head.querySelector('.hint').textContent = session.foldOpen ? 'hide' : 'show'; if (session.foldOpen) fill(); };
       const head = h('div', { class: 'section fold' }, `Met before tracking started`, h('span', {}, baseline.length), h('span', { class: 'hint' }, 'show'));
@@ -647,6 +661,7 @@
             h('a', { class: 'name', href: link, target: '_blank', rel: 'noopener' }, gt),
             h('span', { class: 'rep' }, repText),
             needsLookup ? h('button', { class: 'mini', onclick: () => { session.manual.add(gt); enqueue(gt, true); render(); } }, 'Look up') : null,
+            rep && rep.error ? h('button', { class: 'mini', onclick: () => { delete state.cache[gt]; save(); enqueue(gt, true); render(); } }, 'Retry') : null,
           ),
           (tags.length || socials.length) ? h('div', { class: 'meta' }, tags, socials.length ? h('span', { class: 'social' }, socials) : null) : null,
         ),
@@ -689,8 +704,13 @@
         if (!session.order.includes(gt)) session.order.unshift(gt);
         enqueue(gt);
       }
-      // anyone restored from a previous page load still needs their lookup if it is missing or stale
-      for (const gt of session.order) if (!cacheFresh(gt) && !session.queue.includes(gt)) enqueue(gt);
+      // anyone restored from a previous page load still needs their lookup if it is missing or stale.
+      // A player whose last lookup errored is left alone (Retry button on the row) so we never hammer sotrep.
+      for (const gt of session.order) {
+        const c = state.cache[gt];
+        if (c && c.rep && c.rep.error) continue;
+        if (!cacheFresh(gt) && !session.queue.includes(gt)) enqueue(gt);
+      }
       // keep live status current for streamers on the Recent board
       for (const gt of session.order) { const c = state.cache[gt]; if (c && c.rep && !c.rep.error) queueLiveCheck(gt, twitchLogin(c.rep)); }
       session.lastPoll = new Date();
@@ -720,8 +740,14 @@
         data: JSON.stringify({ query, search_type: type }),
         timeout: 20000,
         onload: (res) => {
-          if (res.status === 401) return resolve({ error: 'sign in to sotrep.com' });
-          if (res.status === 403) return resolve({ error: 'sotrep.com refused (captcha or rate limit)' });
+          if (res.status === 401) return resolve({ error: 'sign in to sotrep.com', pause: 120 });
+          if (res.status === 403) {
+            let d = {}; try { d = JSON.parse(res.responseText) || {}; } catch (e) {}
+            if (d.require_captcha) return resolve({ error: 'sotrep.com wants a captcha: open sotrep.com, search any name there, then retry', pause: 300 });
+            if (d.error === 'username_requirements_not_met') return resolve({ error: 'sotrep.com needs your account set up: open sotrep.com and finish sign-up', pause: 300 });
+            return resolve({ error: 'sotrep.com refused (rate limit), paused for a minute', pause: 60 });
+          }
+          if (res.status === 429) return resolve({ error: 'sotrep.com rate limit, paused for a minute', pause: 60 });
           try {
             const j = JSON.parse(res.responseText);
             if (j.error) return resolve({ error: String(j.error) });
@@ -754,9 +780,22 @@
     if (session.busy) return;
     session.busy = true;
     while (session.queue.length) {
+      // sotrep said stop (captcha, rate limit, not signed in): hold the whole queue until the pause is over
+      if (session.pauseUntil && Date.now() < session.pauseUntil) {
+        setStatus(`Lookups paused until ${new Date(session.pauseUntil).toLocaleTimeString('en-GB')} · ${session.pauseReason || 'sotrep.com asked us to wait'}`, true);
+        await new Promise(r => setTimeout(r, Math.min(session.pauseUntil - Date.now(), 15000)));
+        continue;
+      }
       let gt = session.queue.shift();
       setStatus(statusLine());
       const rep = await sotrepSearch(gt);
+      if (rep.pause) {
+        session.pauseUntil = Date.now() + rep.pause * 1000;
+        session.pauseReason = rep.error;
+        session.queue.unshift(gt);        // put it back; it was not the player's fault
+        render();
+        continue;
+      }
       // typed a Twitch name (or a differently-cased gamertag): carry on under the real gamertag
       if (!rep.error && rep.gamertag && rep.gamertag !== gt && !session.current.has(gt)) {
         const real = rep.gamertag;
