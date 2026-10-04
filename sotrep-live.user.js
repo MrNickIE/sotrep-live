@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      0.5.1
+// @version      0.6.0
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js
@@ -11,12 +11,14 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_notification
+// @grant        GM_info
 // @connect      www.sotrep.com
 // @connect      sotrep.com
 // @connect      discord.com
 // @connect      discordapp.com
 // @connect      twitch.tv
 // @connect      www.twitch.tv
+// @connect      raw.githubusercontent.com
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -127,6 +129,8 @@
     .section.fold:hover{color:#aeb7c2}
     .section .hint{margin-left:auto;text-transform:none;letter-spacing:0;color:#7fb7ff;font-size:11px}
     .btn.on{background:#1f2733;color:#f2f1ec}
+    .banner{position:sticky;top:48px;z-index:2;background:#6b2320;color:#fff;padding:10px 16px;font-size:13px;border-bottom:1px solid #8a2f2b}
+    .banner a{color:#fff;font-weight:700;text-decoration:underline}
     .panel{position:sticky;top:48px;z-index:1;background:#11161c;border-bottom:1px solid #222a34;padding:14px 16px 16px;display:grid;gap:12px;max-width:100%}
     .panel-t{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#6f7986}
     .fld{display:grid;grid-template-columns:90px 1fr;gap:4px 14px;align-items:center;max-width:820px}
@@ -208,6 +212,42 @@
       armed = setTimeout(disarm, 4000);
     });
     return btn;
+  }
+
+  // ---------- version check ----------
+  // Compares this copy's @version with the one on GitHub. A pasted or stale copy gets a banner with the install link,
+  // which is the nearest thing to blocking local copies. Checked on load and every 6 hours.
+  const RAW_URL = 'https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js';
+  const MY_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0';
+  function cmpVersion(a, b) {
+    const pa = String(a).split('.').map(n => parseInt(n, 10) || 0), pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d; }
+    return 0;
+  }
+  function checkForUpdate() {
+    GM_xmlhttpRequest({
+      method: 'GET', url: RAW_URL + '?t=' + Date.now(), timeout: 15000,
+      onload: (r) => {
+        const m = (r.responseText || '').match(/@version\s+(\S+)/);
+        if (!m) return;
+        const latest = m[1];
+        const installedFromLink = !!(GM_info && GM_info.scriptUpdateURL);
+        if (cmpVersion(latest, MY_VERSION) > 0) showUpdateBanner(latest, installedFromLink);
+        else if (!installedFromLink) showUpdateBanner(null, false);
+      },
+    });
+  }
+  let bannerEl = null;
+  function showUpdateBanner(latest, installedFromLink) {
+    if (!bannerEl) return;
+    bannerEl.replaceChildren(
+      latest
+        ? h('span', {}, `Version ${latest} is out, you are on ${MY_VERSION}. `)
+        : h('span', {}, 'This copy was pasted in by hand so it will never update. '),
+      h('a', { href: RAW_URL, target: '_blank', rel: 'noopener' }, latest && installedFromLink ? 'Update now' : 'Install from the link instead'),
+      latest && installedFromLink ? h('span', {}, ' (or Tampermonkey menu, Check for userscript updates)') : h('span', {}, ', then delete this copy in Tampermonkey.'),
+    );
+    bannerEl.style.display = '';
   }
 
   // ---------- alerts ----------
@@ -466,7 +506,8 @@
       twoPress('Reset', 'Really reset?', 'btn quiet', resetAll, 'Forget all remembered names and cached lookups and re-baseline. Press twice.'),
     );
     listEl = h('div', { class: 'list' });
-    const root = h('div', { class: 'root' }, bar, buildAlertsPanel(), listEl);
+    bannerEl = h('div', { class: 'banner', style: 'display:none' });
+    const root = h('div', { class: 'root' }, bar, bannerEl, buildAlertsPanel(), listEl);
     // any click on the board counts as the user gesture Chrome wants before a tab may play audio
     root.addEventListener('click', ensureAudio, { once: true });
     shadow.append(root);
@@ -767,4 +808,6 @@
   buildUI();
   poll();
   setInterval(poll, POLL_SECONDS * 1000);
+  checkForUpdate();
+  setInterval(checkForUpdate, 6 * 3600e3);
 })();

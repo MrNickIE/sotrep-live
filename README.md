@@ -1,5 +1,13 @@
 # SOTREP Live
 
+## Install from this link, nothing else
+
+**https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js**
+
+Open it in Chrome with [Tampermonkey](https://www.tampermonkey.net/) installed and click **Install**. It then updates itself whenever a new version is pushed here.
+
+**Do not download the file and paste it into Tampermonkey.** You end up on a frozen copy with no updates. If you already did, delete that copy and use the link.
+
 A Tampermonkey userscript that shows the Sea of Thieves players you meet, live, with their [SoT Rep](https://www.sotrep.com) reputation.
 
 It turns `https://www.seaofthieves.com/friends` into a second-screen board. While you play, any new name that lands in Rare's "Recently Met" list appears at the top, colour-coded by SOTREP reputation, with a link to the player's profile.
@@ -14,16 +22,21 @@ Independent personal tool. Not affiliated with, or endorsed by, SoT Rep, Rare or
 - The first run takes the current list (around 180 names) as a baseline and does not look any of them up, so the board only shows genuinely new encounters.
 - Nothing touches the game client. The two calls are the same ones the two websites make themselves.
 
-## Install
+## Setup, step by step
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/) in Chrome.
 2. In `chrome://extensions`, open Tampermonkey's details and turn on **Allow User Scripts** (older Chrome: the **Developer mode** toggle). Without this userscripts never run.
-3. Open the raw script and Tampermonkey will offer to install it:
-   `https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js`
+3. Open the install link at the top of this page and click **Install**.
 4. Make sure you are signed in to both seaofthieves.com and sotrep.com in that browser.
-5. Open `https://www.seaofthieves.com/friends`. Allow the one-time request to connect to sotrep.com.
+5. Open `https://www.seaofthieves.com/friends`. Allow the one-time requests to connect to sotrep.com (and twitch.tv, discord.com if you use those alerts).
 
-The script carries `@updateURL` / `@downloadURL` pointing back at this repo, so Tampermonkey picks up new versions on its own (daily by default; Tampermonkey menu, **Check for userscript updates**, for an instant pull). Updating means pushing a new `@version` to `main`.
+Updates arrive on their own, usually within a day. Tampermonkey menu, **Check for userscript updates**, pulls one immediately.
+
+### Firefox and other browsers
+
+Works the same in Firefox with the [Tampermonkey add-on](https://addons.mozilla.org/firefox/addon/tampermonkey/): install the add-on, open the install link at the top, click Install. Skip step 2 above; that toggle is a Chrome thing. Edge and Brave behave like Chrome, including step 2. Violentmonkey should also work but is untested; Greasemonkey will not, as it lacks the `GM_` functions this script uses.
+
+Whatever the browser, allow the one-time requests Tampermonkey shows for sotrep.com (and twitch.tv, discord.com if you use those alerts), or the board shows names with no reputation.
 
 ## Using it
 
