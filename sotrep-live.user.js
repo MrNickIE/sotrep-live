@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      0.9.4
+// @version      0.9.5
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js
@@ -110,7 +110,8 @@
     .bar{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;min-height:48px;padding:8px 16px;
       background:#141920;border-bottom:1px solid #222a34}
     .bar .tabs{flex-shrink:0}
-    .controls{display:flex;align-items:center;gap:10px;margin-left:auto;flex-wrap:wrap}
+    .controls{display:flex;align-items:center;gap:10px;margin-left:auto;flex:1 1 auto;justify-content:flex-end;min-width:0}
+    .controls .search{margin-right:auto}
     .brand{font-weight:700;font-size:14px;letter-spacing:.02em;white-space:nowrap}
     .brand b{color:#7fb7ff;font-weight:700}
     .ver{margin-left:8px;font-size:11px;font-weight:500;color:#6f7986;text-decoration:none;padding:1px 6px;border-radius:999px;border:1px solid #2a3340;vertical-align:middle}
@@ -119,7 +120,7 @@
     .status{color:#8a93a0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1 1 200px}
     .status .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#2f9e63;margin-right:6px;vertical-align:middle}
     .status .dot.err{background:#d6453d}
-    .search{display:flex;align-items:center;background:#0e1114;border:1px solid #2a3340;border-radius:6px;height:30px;overflow:hidden;flex:1 1 180px;max-width:260px}
+    .search{display:flex;align-items:center;background:#0e1114;border:1px solid #2a3340;border-radius:6px;height:30px;overflow:hidden;flex:1 1 160px;max-width:420px}
     .search input{all:unset;flex:1;min-width:0;height:30px;padding:0 10px;color:#e6e4dd;font:12.5px ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
     .search input::placeholder{color:#5e6875}
     .search button{all:unset;cursor:pointer;height:30px;padding:0 10px;color:#9fb3c8;font-size:12px;border-left:1px solid #2a3340}
