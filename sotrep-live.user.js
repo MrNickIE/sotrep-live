@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      0.9.1
+// @version      0.9.2
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js
@@ -579,7 +579,9 @@
   function statusLine() {
     const t = session.lastPoll ? session.lastPoll.toLocaleTimeString('en-GB') : '…';
     const q = session.queue.length ? ` · ${session.queue.length} lookup${session.queue.length > 1 ? 's' : ''} queued` : '';
-    return `${session.count} in Recently Met · checked ${t}${q}`;
+    const every = Math.round((typeof nextPollDelay === 'function' ? nextPollDelay() : POLL_SECONDS * 1000) / 1000);
+    const cadence = every > POLL_SECONDS ? ` · quiet, checking every ${every >= 120 ? Math.round(every / 60) + ' min' : every + ' s'}` : '';
+    return `${session.count} in Recently Met · checked ${t}${q}${cadence}`;
   }
 
   function repClass(rep) {
@@ -726,17 +728,41 @@
   // ---------- data: Recently Met ----------
   async function fetchRecent() {
     const r = await fetch(RECENT_URL, { headers: { Accept: 'application/json' } });
-    if (r.status === 401 || r.status === 403) throw new Error('Not logged in to seaofthieves.com (reload and sign in)');
+    if (r.status === 401 || r.status === 403) throw Object.assign(new Error('Not logged in to seaofthieves.com (reload and sign in)'), { backoff: 300 });
+    if (r.status === 429) throw Object.assign(new Error('seaofthieves.com asked us to slow down, waiting 5 minutes'), { backoff: 300 });
+    if (r.status >= 500) throw Object.assign(new Error(`seaofthieves.com error ${r.status}, waiting 2 minutes`), { backoff: 120 });
     const ct = r.headers.get('content-type') || '';
-    if (!ct.includes('json')) throw new Error('Unexpected reply from seaofthieves.com (session expired?)');
+    if (!ct.includes('json')) throw Object.assign(new Error('Unexpected reply from seaofthieves.com (session expired?)'), { backoff: 120 });
     const j = await r.json();
     if (!Array.isArray(j)) throw new Error('Unexpected shape from get-recent-friends');
     return j;
   }
 
+  // Adaptive polling. Rare's list changes only when you actually meet someone, so there is no point asking every
+  // 20 s all night. Fast while things are happening, slower when quiet, slower again when the tab is hidden and quiet.
+  const POLL_FAST_MS = POLL_SECONDS * 1000;   // list changed in the last 10 minutes
+  const POLL_SLOW_MS = 60 * 1000;             // nothing new for 10 minutes
+  const POLL_IDLE_MS = 180 * 1000;            // nothing new for 30 minutes and the tab is hidden
+  let lastChangeAt = Date.now();
+  let pollTimer = null;
+  function nextPollDelay() {
+    const quiet = Date.now() - lastChangeAt;
+    if (quiet > 30 * 60e3 && document.hidden) return POLL_IDLE_MS;
+    if (quiet > 10 * 60e3) return POLL_SLOW_MS;
+    return POLL_FAST_MS;
+  }
+  function schedulePoll(delayMs) {
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(poll, delayMs);
+  }
+  // coming back to the tab after a quiet spell: poll straight away rather than waiting out a long idle timer
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && session.lastPoll && Date.now() - session.lastPoll > POLL_FAST_MS) schedulePoll(500); });
+
   async function poll() {
+    let delay = null;
     try {
       const list = await fetchRecent();
+      if (list.length !== session.count) lastChangeAt = Date.now();
       session.count = list.length;
       const now = new Date().toISOString();
       const fresh = [];
@@ -754,7 +780,8 @@
         } else if (state.inList && !state.inList[gt] && (state.missing[gt] | 0) >= MISSING_POLLS) {
           // seen before, dropped off Rare's rolling list, now back: you met them again
           state.seen[gt] = now;
-          delete state.cache[gt];   // rep may have changed since last time
+          const c = state.cache[gt];
+          if (c && Date.now() - c.at > 3600e3) delete state.cache[gt];   // only re-ask sotrep if the answer is over an hour old
           fresh.push(gt);
         }
         delete state.missing[gt];
@@ -778,12 +805,15 @@
       }
       // keep live status current for streamers on the Recent board
       for (const gt of session.order) { const c = state.cache[gt]; if (c && c.rep && !c.rep.error) queueLiveCheck(gt, twitchLogin(c.rep)); }
+      if (fresh.length) lastChangeAt = Date.now();
       session.lastPoll = new Date();
       setStatus(statusLine());
       render();
     } catch (e) {
       setStatus('Problem: ' + (e.message || String(e)), true);
+      if (e && e.backoff) delay = e.backoff * 1000;
     }
+    schedulePoll(delay || nextPollDelay());
   }
 
   // ---------- data: SOTREP ----------
@@ -792,6 +822,9 @@
   async function sotrepSearch(gamertag) {
     const xbox = await sotrepSearchAs(gamertag, 'xbox');
     if (!xbox.error || !/not found/i.test(xbox.error)) return xbox;
+    // Only a hand-typed name might be a Twitch channel. Names from Rare are real gamertags, so a miss there
+    // just means sotrep has no record of them; no point in a second request.
+    if (!session.manual.has(gamertag)) return xbox;
     const twitch = await sotrepSearchAs(gamertag, 'twitch');
     if (!twitch.error) { twitch.resolved_via = 'twitch'; return twitch; }
     return xbox;
@@ -834,7 +867,7 @@
     })]);
   }
 
-  const MAX_RECHECKS = 2;   // how many times to go back for a player sotrep is "still enriching"
+  const MAX_RECHECKS = 1;   // how many times to go back for a player sotrep is "still enriching" (one is enough; keeps requests down)
   function cacheFresh(gt) {
     const c = state.cache[gt];
     if (!c || !c.rep || c.rep.error) return false;
@@ -923,8 +956,7 @@
 
   // ---------- go ----------
   buildUI();
-  poll();
-  setInterval(poll, POLL_SECONDS * 1000);
+  poll();   // schedules itself afterwards at the adaptive interval
   checkForUpdate();
   setInterval(checkForUpdate, 6 * 3600e3);
 })();

@@ -16,9 +16,9 @@ Independent personal tool. Not affiliated with, or endorsed by, SoT Rep, Rare or
 
 ## How it works
 
-- Every 20 seconds it reads the same `Recently Met` data the seaofthieves.com friends page shows, using your normal seaofthieves.com login.
+- It reads the same `Recently Met` data the seaofthieves.com friends page shows, using your normal seaofthieves.com login: every 20 seconds while you are meeting people, once a minute after ten quiet minutes, every three minutes when the tab is hidden and nothing has changed for half an hour. It backs off for several minutes if the site asks it to.
 - Any gamertag it has not seen before is a new encounter. It is looked up on sotrep.com the same way the site's own search box does, using your sotrep.com login, and shown on the board.
-- Lookups run one at a time, 3 s apart, and are cached for 24 hours. There is deliberately no bulk lookup. If sotrep.com rate-limits you anyway, the board pauses lookups for the time it asks and carries on afterwards; the status line says so.
+- Lookups run one at a time, 3 s apart, and are cached for 24 hours. A new player normally costs one request. There is deliberately no bulk lookup. If sotrep.com rate-limits you anyway, the board pauses lookups for the time it asks and carries on afterwards; the status line says so.
 - The first run takes the current list (around 180 names) as a baseline and does not look any of them up, so the board only shows genuinely new encounters.
 - Nothing touches the game client. The two calls are the same ones the two websites make themselves.
 
