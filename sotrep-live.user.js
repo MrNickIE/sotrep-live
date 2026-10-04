@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      0.7.4
+// @version      0.8.0
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js
@@ -156,7 +156,8 @@
     .toggle input::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#8a93a0;transition:left .15s,background .15s}
     .toggle input:checked{background:#2f9e63}
     .toggle input:checked::after{left:14px;background:#fff}
-    .list,.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:8px;align-content:start}
+    .list,.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(520px,1fr));gap:8px;align-content:start}
+    @media (max-width:600px){.list,.grid{grid-template-columns:1fr}}
     .list{padding:14px 16px 40px}
     .grid{grid-column:1/-1}
     .section{grid-column:1/-1;display:flex;align-items:baseline;gap:8px;color:#6f7986;font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin:6px 0 2px}
@@ -188,10 +189,22 @@
     .tag.red{background:#44201e;color:#f08a84}
     .tag.live{background:#9146ff;color:#fff;font-weight:600;text-decoration:none}
     .tag.live:hover{background:#a970ff}
-    .social{font-size:11px;color:#6f7986;white-space:nowrap}
-    .social a{color:#7fb7ff;text-decoration:none}
-    .social a:hover{text-decoration:underline}
-    .social .sep{margin:0 5px;color:#3a4454}
+    .social{font-size:11px;color:#8a93a0;white-space:nowrap;display:inline-flex;gap:8px;align-items:center}
+    .soc{display:inline-flex;align-items:center;gap:4px;color:#8a93a0;text-decoration:none}
+    a.soc{color:#aeb7c2}
+    a.soc:hover{color:#fff}
+    .pbadge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 3px;border-radius:4px;font-size:9.5px;font-weight:700;letter-spacing:.02em;color:#fff;background:#3a4454}
+    .pbadge.twitch{background:#9146ff}
+    .pbadge.discord{background:#5865f2}
+    .pbadge.steam{background:#1b2838;border:1px solid #2a475e}
+    .pbadge.youtube{background:#e02424}
+    .pbadge.twitter,.pbadge.x{background:#000;border:1px solid #333}
+    .pbadge.tiktok{background:#111;border:1px solid #333}
+    .pbadge.kick{background:#53fc18;color:#111}
+    .pbadge.xbox{background:#107c10}
+    .pbadge.instagram{background:#c13584}
+    .pbadge.reddit{background:#ff4500}
+    .pbadge.bluesky{background:#1185fe}
     .side{text-align:right;font-size:11.5px;color:#6f7986;white-space:nowrap;line-height:1.5}
     .side .pres{color:#8a93a0}
     .side .pres.on{color:#4fb57f}
@@ -569,6 +582,7 @@
     return parts.join(' · ');
   }
   const tagName = (t) => typeof t === 'string' ? t : (t.tooltip || t.name || t.label || t.title || t.slug || 'tag');
+  const PLATFORM_LETTER = { twitch: 'T', discord: 'D', steam: 'S', youtube: 'Y', twitter: 'X', x: 'X', tiktok: 'Tk', kick: 'K', xbox: 'Xb', instagram: 'Ig', reddit: 'R', bluesky: 'B' };
 
   // Baseline names all share the timestamp of the very first poll; anything with that stamp was met before tracking began
   function baselineStamp() {
@@ -647,10 +661,13 @@
         if (login && lv && lv.live) tags.unshift(h('a', { class: 'tag live', href: lv.url, target: '_blank', rel: 'noopener', title: lv.title || 'Live on Twitch' }, 'LIVE on Twitch'));
         else if (login && !lv) tags.push(h('span', { class: 'tag' }, 'checking Twitch…'));
         const soc = (rep.socials || []).filter(s => s && !s.hidden && s.platform && s.platform !== 'playfab');
-        soc.forEach((s, i) => {
-          if (i) socials.push(h('span', { class: 'sep' }, '·'));
+        soc.forEach((s) => {
           const label = s.username || s.platform;
-          socials.push(s.link ? h('a', { href: s.link, target: '_blank', rel: 'noopener', title: s.platform }, label) : h('span', { title: s.platform }, label));
+          const p = String(s.platform).toLowerCase();
+          const badge = h('span', { class: 'pbadge ' + p, title: s.platform }, PLATFORM_LETTER[p] || p.charAt(0).toUpperCase());
+          socials.push(s.link
+            ? h('a', { class: 'soc', href: s.link, target: '_blank', rel: 'noopener', title: s.platform }, badge, label)
+            : h('span', { class: 'soc', title: s.platform }, badge, label));
         });
       }
 
@@ -826,12 +843,16 @@
       }
       const prev = state.cache[gt];
       const rechecks = prev && prev.rep && prev.rep.enriching ? (prev.rechecks | 0) + 1 : 0;
-      state.cache[gt] = { at: Date.now(), rep, rechecks };
+      state.cache[gt] = { at: Date.now(), rep, rechecks, picRetried: !!(prev && prev.picRetried) };
       save();
       render();
       if (rep.enriching && !rep.error && rechecks < MAX_RECHECKS) {
         // SOTREP is still resolving this player in the background; go back for the rest shortly.
         setTimeout(() => { if (!session.queue.includes(gt)) { session.queue.push(gt); pump(); } }, 15000);
+      } else if (!rep.error && !rep.gamerpic_url && !session.current.has(gt) && !state.cache[gt].picRetried) {
+        // manual lookup with no picture yet: sotrep usually has fetched one a minute later, look once more
+        state.cache[gt].picRetried = true;
+        setTimeout(() => { if (!session.queue.includes(gt)) { session.queue.push(gt); pump(); } }, 60000);
       }
       // alert only on the first result for a player, not on enrichment re-checks
       if (!rep.error && session.order.includes(gt) && !session.manual.has(gt) && !(prev && prev.rep && !prev.rep.error)) fireAlerts(gt, rep);
