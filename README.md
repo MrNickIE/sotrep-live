@@ -18,9 +18,12 @@ Personal tool. Not affiliated with Rare or Microsoft.
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/) in Chrome.
 2. In `chrome://extensions`, open Tampermonkey's details and turn on **Allow User Scripts** (older Chrome: the **Developer mode** toggle). Without this userscripts never run.
-3. Tampermonkey icon, **Create a new script**, replace the template with the contents of `sotrep-live.user.js`, save.
+3. Open the raw script and Tampermonkey will offer to install it:
+   `https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js`
 4. Make sure you are signed in to both seaofthieves.com and sotrep.com in that browser.
 5. Open `https://www.seaofthieves.com/friends`. Allow the one-time request to connect to sotrep.com.
+
+The script carries `@updateURL` / `@downloadURL` pointing back at this repo, so Tampermonkey picks up new versions on its own (daily by default; Tampermonkey menu, **Check for userscript updates**, for an instant pull). Updating means pushing a new `@version` to `main`.
 
 ## Using it
 
