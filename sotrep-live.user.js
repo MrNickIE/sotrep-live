@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      0.3.2
+// @version      0.4.0
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js
@@ -13,6 +13,8 @@
 // @grant        GM_notification
 // @connect      www.sotrep.com
 // @connect      sotrep.com
+// @connect      discord.com
+// @connect      discordapp.com
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -49,14 +51,17 @@
     cache: GM_getValue('cache', {}),      // gamertag -> { at, rep }
     baselined: GM_getValue('baselined', false),
     baselineAt: GM_getValue('baselineAt', null),   // ISO stamp shared by every name in the first poll
-    notifyFlagged: GM_getValue('notifyFlagged', true),
+    alerts: Object.assign(
+      { sound: true, discord: '', desktop: false, threshold: 'moderate' },   // threshold: 'moderate' (orange+red) or 'severe' (red only)
+      GM_getValue('alerts', {}),
+    ),
   };
   const save = () => {
     GM_setValue('seen', state.seen);
     GM_setValue('cache', state.cache);
     GM_setValue('baselined', state.baselined);
     GM_setValue('baselineAt', state.baselineAt);
-    GM_setValue('notifyFlagged', state.notifyFlagged);
+    GM_setValue('alerts', state.alerts);
   };
 
   // in-memory
@@ -113,6 +118,19 @@
     .section.fold{cursor:pointer;margin-top:18px;user-select:none}
     .section.fold:hover{color:#aeb7c2}
     .section .hint{margin-left:auto;text-transform:none;letter-spacing:0;color:#7fb7ff;font-size:11px}
+    .btn.on{background:#1f2733;color:#f2f1ec}
+    .panel{position:sticky;top:48px;z-index:1;background:#11161c;border-bottom:1px solid #222a34;padding:14px 16px 16px;display:grid;gap:12px;max-width:100%}
+    .panel-t{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#6f7986}
+    .fld{display:grid;grid-template-columns:90px 1fr;gap:4px 14px;align-items:center;max-width:820px}
+    .fld-l{color:#8a93a0;font-size:12px}
+    .fld-h{grid-column:2;color:#5e6875;font-size:11.5px}
+    .fld input[type=text]{all:unset;width:100%;max-width:560px;height:30px;padding:0 10px;border-radius:6px;border:1px solid #2a3340;background:#0e1114;color:#e6e4dd;font:12.5px ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
+    .fld select{all:unset;height:30px;padding:0 10px;border-radius:6px;border:1px solid #2a3340;background:#0e1114;color:#e6e4dd;font-size:12.5px;cursor:pointer}
+    .chk{display:flex;align-items:center;gap:8px;color:#c7cdd6;font-size:12.5px;cursor:pointer}
+    .chk input{all:unset;width:14px;height:14px;border-radius:3px;border:1px solid #3a4454;background:#0e1114;display:inline-block;position:relative;cursor:pointer}
+    .chk input:checked{background:#2f9e63;border-color:#2f9e63}
+    .chk input:checked::after{content:"";position:absolute;left:4px;top:1px;width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+    .row-ctl{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
     .toggle{display:flex;align-items:center;gap:6px;color:#8a93a0;font-size:12px;white-space:nowrap;cursor:pointer;user-select:none}
     .toggle input{all:unset;width:28px;height:16px;border-radius:999px;background:#2a3340;position:relative;transition:background .15s;cursor:pointer}
     .toggle input::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#8a93a0;transition:left .15s,background .15s}
@@ -180,8 +198,124 @@
     return btn;
   }
 
-  let listEl, statusEl, nameBox;
+  // ---------- alerts ----------
+  let audioCtx = null;
+  function ensureAudio() {
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    } catch (e) {}
+  }
+  // Two-note chime, red gets a lower, longer second note so you can tell them apart by ear
+  function playChime(severity) {
+    ensureAudio();
+    if (!audioCtx) return;
+    const notes = severity === 'severe' ? [[880, 0, 0.18], [440, 0.2, 0.45]] : [[660, 0, 0.15], [880, 0.17, 0.25]];
+    for (const [freq, at, dur] of notes) {
+      const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+      o.type = 'sine'; o.frequency.value = freq;
+      const t = audioCtx.currentTime + at;
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.25, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g).connect(audioCtx.destination); o.start(t); o.stop(t + dur + 0.05);
+    }
+  }
+  function postDiscord(gt, rep, severity, link) {
+    const url = (state.alerts.discord || '').trim();
+    if (!/^https:\/\/(canary\.|ptb\.)?discord(app)?\.com\/api\/webhooks\//.test(url)) return Promise.resolve({ error: 'Webhook URL does not look like a Discord webhook' });
+    const tags = [...(rep.manual_tags || []), ...(rep.badges || [])].map(tagName).join(', ');
+    const embed = {
+      title: gt,
+      url: link,
+      description: repLabel(rep),
+      color: severity === 'severe' ? 0xd6453d : 0xe07b2a,
+      fields: [
+        tags ? { name: 'Tags', value: tags, inline: true } : null,
+        rep.pc_check_status ? { name: 'PC check', value: String(rep.pc_check_status), inline: true } : null,
+        (rep.account_count | 0) > 1 ? { name: 'Accounts', value: String(rep.account_count), inline: true } : null,
+      ].filter(Boolean),
+      footer: { text: 'SOTREP Live' },
+      timestamp: new Date().toISOString(),
+    };
+    return new Promise((resolve) => {
+      GM_xmlhttpRequest({
+        method: 'POST', url, headers: { 'Content-Type': 'application/json' },
+        data: JSON.stringify({ username: 'SOTREP Live', embeds: [embed] }), timeout: 15000,
+        onload: (r) => resolve(r.status >= 200 && r.status < 300 ? { ok: true } : { error: `Discord replied ${r.status}` }),
+        onerror: () => resolve({ error: 'Could not reach Discord' }),
+        ontimeout: () => resolve({ error: 'Discord timed out' }),
+      });
+    });
+  }
+  function desktopNotify(gt, rep) {
+    try {
+      if (window.Notification && Notification.permission === 'granted') {
+        new Notification(`SOTREP: ${gt}`, { body: repLabel(rep), tag: 'sotrep-' + gt });
+      } else {
+        GM_notification({ title: `SOTREP: ${gt}`, text: repLabel(rep), timeout: 8000, onclick: () => window.focus() });
+      }
+    } catch (e) {}
+  }
+  function meetsThreshold(cls) {
+    return cls === 'severe' || (cls === 'moderate' && state.alerts.threshold === 'moderate');
+  }
+  async function fireAlerts(gt, rep) {
+    const cls = repClass(rep);
+    if (!meetsThreshold(cls)) return;
+    const link = rep.profile_id ? `${SOTREP}/search/${rep.profile_id}` : `${SOTREP}/`;
+    if (state.alerts.sound) playChime(cls);
+    if (state.alerts.desktop) desktopNotify(gt, rep);
+    if (state.alerts.discord) {
+      const r = await postDiscord(gt, rep, cls, link);
+      if (r.error) setStatus('Discord alert failed: ' + r.error, true);
+    }
+  }
+
+  let listEl, statusEl, nameBox, panelEl;
   function setView(v) { session.setView(v); }
+
+  function buildAlertsPanel() {
+    const a = state.alerts;
+    const field = (label, control, hint) => h('div', { class: 'fld' }, h('div', { class: 'fld-l' }, label), control, hint ? h('div', { class: 'fld-h' }, hint) : null);
+    const check = (key, text) => {
+      const c = h('input', { type: 'checkbox' }); c.checked = !!a[key];
+      c.addEventListener('change', () => { a[key] = c.checked; save(); if (key === 'sound' && c.checked) ensureAudio(); });
+      return h('label', { class: 'chk' }, c, text);
+    };
+    const webhook = h('input', { type: 'text', placeholder: 'https://discord.com/api/webhooks/…', spellcheck: 'false', autocomplete: 'off' });
+    webhook.value = a.discord || '';
+    webhook.addEventListener('change', () => { a.discord = webhook.value.trim(); save(); });
+    const thr = h('select', {},
+      h('option', { value: 'moderate' }, 'Orange and red (moderate or worse)'),
+      h('option', { value: 'severe' }, 'Red only (severe or banned accounts)'));
+    thr.value = a.threshold;
+    thr.addEventListener('change', () => { a.threshold = thr.value; save(); });
+
+    const testMsg = h('div', { class: 'fld-h' });
+    const fakeRep = { severe_count: 1, banned_xuids: ['test'], manual_tags: [{ tooltip: 'Test alert' }], profile_id: null };
+    const testAll = h('button', { class: 'btn' }, 'Test alerts');
+    testAll.addEventListener('click', async () => {
+      testMsg.textContent = 'Testing…';
+      const parts = [];
+      if (a.sound) { playChime('severe'); parts.push('sound played'); }
+      if (a.desktop) { desktopNotify('TestPirate', fakeRep); parts.push('desktop sent'); }
+      if (a.discord) { const r = await postDiscord('TestPirate', fakeRep, 'severe', SOTREP); parts.push(r.ok ? 'Discord ok' : 'Discord: ' + r.error); }
+      testMsg.textContent = parts.length ? parts.join(' · ') : 'Nothing enabled';
+    });
+    const desktopBtn = h('button', { class: 'btn quiet' }, 'Allow desktop notifications');
+    desktopBtn.addEventListener('click', async () => {
+      try { const p = await Notification.requestPermission(); testMsg.textContent = 'Desktop notifications: ' + p; } catch (e) { testMsg.textContent = 'Not available in this browser'; }
+    });
+
+    panelEl = h('div', { class: 'panel', style: 'display:none' },
+      h('div', { class: 'panel-t' }, 'Alerts'),
+      field('Trigger on', thr),
+      field('Sound', check('sound', 'Play a chime in this tab (works with the game in front, no permissions needed)')),
+      field('Discord', webhook, 'Paste a webhook URL for a private channel. Flagged players get posted there with the rep and a profile link.'),
+      field('Desktop', h('div', { class: 'row-ctl' }, check('desktop', 'Windows notification'), desktopBtn), 'Hidden behind a full-screen game; useful on a second screen only.'),
+      h('div', { class: 'row-ctl' }, testAll, testMsg),
+    );
+    return panelEl;
+  }
   function buildUI() {
     const host = document.createElement('div');
     host.id = 'sotrep-live-host';
@@ -193,9 +327,12 @@
     nameBox = h('input', { type: 'text', placeholder: 'Check a gamertag', spellcheck: 'false', autocomplete: 'off' });
     nameBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') checkName(); });
 
-    const notify = h('input', { type: 'checkbox' });
-    notify.checked = state.notifyFlagged;
-    notify.addEventListener('change', () => { state.notifyFlagged = notify.checked; save(); });
+    const alertsBtn = h('button', { class: 'btn quiet', title: 'Alert settings' }, 'Alerts');
+    alertsBtn.addEventListener('click', () => {
+      const open = panelEl.style.display !== 'none';
+      panelEl.style.display = open ? 'none' : '';
+      alertsBtn.classList.toggle('on', !open);
+    });
 
     const tabRecent = h('button', { class: 'tab on', onclick: () => setView('recent') }, 'Recent');
     const tabHistory = h('button', { class: 'tab', onclick: () => setView('history') }, 'History');
@@ -206,12 +343,15 @@
       h('div', { class: 'tabs' }, tabRecent, tabHistory),
       statusEl,
       h('div', { class: 'search' }, nameBox, h('button', { onclick: checkName }, 'Check')),
-      h('label', { class: 'toggle', title: 'Desktop notification when a new player is orange or red' }, notify, 'Alerts'),
+      alertsBtn,
       h('button', { class: 'btn quiet', onclick: clearSession, title: 'Clear the Recent board. Names stay remembered so they are not treated as new again.' }, 'Clear'),
       twoPress('Reset', 'Really reset?', 'btn quiet', resetAll, 'Forget all remembered names and cached lookups and re-baseline. Press twice.'),
     );
     listEl = h('div', { class: 'list' });
-    shadow.append(h('div', { class: 'root' }, bar, listEl));
+    const root = h('div', { class: 'root' }, bar, buildAlertsPanel(), listEl);
+    // any click on the board counts as the user gesture Chrome wants before a tab may play audio
+    root.addEventListener('click', ensureAudio, { once: true });
+    shadow.append(root);
     document.body.append(host);
     document.title = 'SOTREP Live';
     render();
@@ -452,12 +592,8 @@
         // SOTREP is still resolving this player in the background; go back for the rest shortly.
         setTimeout(() => { if (!session.queue.includes(gt)) { session.queue.push(gt); pump(); } }, 15000);
       }
-      if (state.notifyFlagged && session.order.includes(gt)) {
-        const cls = repClass(rep);
-        if (cls === 'severe' || cls === 'moderate') {
-          try { GM_notification({ title: `SOTREP: ${gt}`, text: repLabel(rep), timeout: 8000, onclick: () => window.focus() }); } catch (e) {}
-        }
-      }
+      // alert only on the first result for a player, not on enrichment re-checks
+      if (!rep.error && session.order.includes(gt) && !(prev && prev.rep && !prev.rep.error)) fireAlerts(gt, rep);
       await new Promise(r => setTimeout(r, LOOKUP_GAP_MS));
     }
     session.busy = false;

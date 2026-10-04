@@ -30,7 +30,7 @@ The script carries `@updateURL` / `@downloadURL` pointing back at this repo, so 
 - **Recent** shows players first seen in the last 20 minutes (survives a refresh).
 - **History** shows everyone ever recorded, newest first, with a **Look up** button on anyone not yet checked. Names from the baseline sit in a collapsed group at the bottom.
 - **Check a gamertag** looks up any name you type, for players you spot in game before Rare registers them.
-- **Alerts** sends a desktop notification when a new player is orange (moderate) or red (severe or banned accounts).
+- **Alerts** opens the alert settings. A chime plays in the tab by default when a new player is orange (moderate) or red (severe or banned accounts); you can narrow it to red only. Paste a Discord webhook URL to have flagged players posted to a private channel with the rep summary and a profile link, which is the reliable route while a game has the screen. A Windows desktop notification is also available but is hidden behind a full-screen game. **Test alerts** fires every enabled channel once.
 - **Clear** empties the Recent board. **Reset** (press twice) forgets everything and re-baselines.
 
 Left edge and reputation text: green clean, yellow light flags, orange moderate, red severe or banned accounts.
