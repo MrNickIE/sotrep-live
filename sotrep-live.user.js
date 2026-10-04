@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      0.4.0
+// @version      0.5.0
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js
@@ -15,6 +15,8 @@
 // @connect      sotrep.com
 // @connect      discord.com
 // @connect      discordapp.com
+// @connect      twitch.tv
+// @connect      www.twitch.tv
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -52,7 +54,7 @@
     baselined: GM_getValue('baselined', false),
     baselineAt: GM_getValue('baselineAt', null),   // ISO stamp shared by every name in the first poll
     alerts: Object.assign(
-      { sound: true, discord: '', desktop: false, threshold: 'moderate' },   // threshold: 'moderate' (orange+red) or 'severe' (red only)
+      { sound: true, discord: '', desktop: false, threshold: 'moderate', streamers: true },   // threshold: 'moderate' (orange+red) or 'severe' (red only)
       GM_getValue('alerts', {}),
     ),
   };
@@ -73,7 +75,12 @@
     lastPoll: null,
     count: 0,
     view: 'recent',     // 'recent' | 'history'
+    live: new Map(),    // twitch login -> { at, live, title, url }
+    liveQueue: [],
+    liveBusy: false,
   };
+  const LIVE_TTL_MS = 5 * 60e3;       // how long a Twitch live/offline answer is trusted
+  const LIVE_GAP_MS = 2000;           // pause between Twitch page checks
 
   // Restore anyone first seen recently so a refresh does not wipe the board mid-session.
   // Baseline names (everyone present on the very first poll) are never "recent", whatever their stamp.
@@ -124,7 +131,9 @@
     .fld{display:grid;grid-template-columns:90px 1fr;gap:4px 14px;align-items:center;max-width:820px}
     .fld-l{color:#8a93a0;font-size:12px}
     .fld-h{grid-column:2;color:#5e6875;font-size:11.5px}
-    .fld input[type=text]{all:unset;width:100%;max-width:560px;height:30px;padding:0 10px;border-radius:6px;border:1px solid #2a3340;background:#0e1114;color:#e6e4dd;font:12.5px ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
+    .row-ctl.wide{flex-wrap:nowrap}
+    .row-ctl.wide input{flex:1;min-width:200px}
+    .fld input[type=text],.fld input[type=password]{all:unset;width:100%;max-width:560px;height:30px;padding:0 10px;border-radius:6px;border:1px solid #2a3340;background:#0e1114;color:#e6e4dd;font:12.5px ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
     .fld select{all:unset;height:30px;padding:0 10px;border-radius:6px;border:1px solid #2a3340;background:#0e1114;color:#e6e4dd;font-size:12.5px;cursor:pointer}
     .chk{display:flex;align-items:center;gap:8px;color:#c7cdd6;font-size:12.5px;cursor:pointer}
     .chk input{all:unset;width:14px;height:14px;border-radius:3px;border:1px solid #3a4454;background:#0e1114;display:inline-block;position:relative;cursor:pointer}
@@ -163,6 +172,8 @@
     .tag.amber{background:#3a2d12;color:#e6b85c}
     .tag.green{background:#143426;color:#6fcf97}
     .tag.red{background:#44201e;color:#f08a84}
+    .tag.live{background:#9146ff;color:#fff;font-weight:600;text-decoration:none}
+    .tag.live:hover{background:#a970ff}
     .social{font-size:11px;color:#6f7986;white-space:nowrap}
     .social a{color:#7fb7ff;text-decoration:none}
     .social a:hover{text-decoration:underline}
@@ -255,6 +266,83 @@
       }
     } catch (e) {}
   }
+  // ---------- Twitch live check ----------
+  // Twitch's channel page carries a JSON-LD block with "isLiveBroadcast": true while the channel is live.
+  // No API key needed; one page fetch per streamer per LIVE_TTL_MS.
+  function twitchLogin(rep) {
+    const s = (rep && rep.socials || []).find(x => x && !x.hidden && x.platform === 'twitch' && x.username);
+    if (!s) return null;
+    const fromLink = s.link && (String(s.link).match(/twitch\.tv\/([A-Za-z0-9_]+)/) || [])[1];
+    return (fromLink || String(s.username).trim().replace(/^@/, '')).toLowerCase();
+  }
+  function fetchTwitchLive(login) {
+    return new Promise((resolve) => {
+      GM_xmlhttpRequest({
+        method: 'GET', url: `https://www.twitch.tv/${encodeURIComponent(login)}`, timeout: 20000,
+        headers: { 'Accept': 'text/html' },
+        onload: (r) => {
+          const html = r.responseText || '';
+          // the JSON-LD is embedded inside a JS string, so the quotes arrive backslash-escaped
+          const live = /\\?"isLiveBroadcast\\?"\s*:\s*true/.test(html);
+          let title = '';
+          const m = html.match(/<meta\s+(?:name|property)="(?:og:)?description"\s+content="([^"]{0,200})"/i);
+          if (m) title = m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+          resolve({ live, title, status: r.status });
+        },
+        onerror: () => resolve({ live: false, error: 'unreachable' }),
+        ontimeout: () => resolve({ live: false, error: 'timeout' }),
+      });
+    });
+  }
+  function liveEntry(login) { return login ? session.live.get(login) : null; }
+  function liveFresh(login) { const e = liveEntry(login); return e && (Date.now() - e.at) < LIVE_TTL_MS; }
+  function queueLiveCheck(gt, login) {
+    if (!login || liveFresh(login)) return;
+    if (!session.liveQueue.some(q => q.login === login)) session.liveQueue.push({ gt, login });
+    pumpLive();
+  }
+  async function pumpLive() {
+    if (session.liveBusy) return;
+    session.liveBusy = true;
+    while (session.liveQueue.length) {
+      const { gt, login } = session.liveQueue.shift();
+      const prev = liveEntry(login);
+      const r = await fetchTwitchLive(login);
+      session.live.set(login, { at: Date.now(), live: r.live, title: r.title || '', url: `https://www.twitch.tv/${login}`, error: r.error });
+      render();
+      // alert on the transition to live (or the first time we see them live), not on every re-check
+      if (r.live && !(prev && prev.live) && session.order.includes(gt)) fireStreamerAlert(gt, login, r.title);
+      await new Promise(res => setTimeout(res, LIVE_GAP_MS));
+    }
+    session.liveBusy = false;
+  }
+  async function fireStreamerAlert(gt, login, title) {
+    if (!state.alerts.streamers) return;
+    const url = `https://www.twitch.tv/${login}`;
+    if (state.alerts.sound) playChime('moderate');
+    if (state.alerts.desktop) { try { GM_notification({ title: `Streamer live: ${gt}`, text: title || url, timeout: 8000, onclick: () => window.open(url) }); } catch (e) {} }
+    if (state.alerts.discord) {
+      const r = await postDiscordRaw({
+        title: `${gt} is live on Twitch`, url, description: title || '', color: 0x9146ff,
+        footer: { text: 'SOTREP Live' }, timestamp: new Date().toISOString(),
+      });
+      if (r.error) setStatus('Discord alert failed: ' + r.error, true);
+    }
+  }
+  function postDiscordRaw(embed) {
+    const url = (state.alerts.discord || '').trim();
+    if (!/^https:\/\/(canary\.|ptb\.)?discord(app)?\.com\/api\/webhooks\//.test(url)) return Promise.resolve({ error: 'Webhook URL does not look like a Discord webhook' });
+    return new Promise((resolve) => {
+      GM_xmlhttpRequest({
+        method: 'POST', url, headers: { 'Content-Type': 'application/json' },
+        data: JSON.stringify({ username: 'SOTREP Live', embeds: [embed] }), timeout: 15000,
+        onload: (r) => resolve(r.status >= 200 && r.status < 300 ? { ok: true } : { error: `Discord replied ${r.status}` }),
+        onerror: () => resolve({ error: 'Could not reach Discord' }),
+        ontimeout: () => resolve({ error: 'Discord timed out' }),
+      });
+    });
+  }
+
   function meetsThreshold(cls) {
     return cls === 'severe' || (cls === 'moderate' && state.alerts.threshold === 'moderate');
   }
@@ -281,9 +369,36 @@
       c.addEventListener('change', () => { a[key] = c.checked; save(); if (key === 'sound' && c.checked) ensureAudio(); });
       return h('label', { class: 'chk' }, c, text);
     };
-    const webhook = h('input', { type: 'text', placeholder: 'https://discord.com/api/webhooks/…', spellcheck: 'false', autocomplete: 'off' });
+    // masked like a password: a webhook URL is a posting credential for that channel
+    const webhook = h('input', { type: 'password', placeholder: 'https://discord.com/api/webhooks/…', spellcheck: 'false', autocomplete: 'off' });
     webhook.value = a.discord || '';
     webhook.addEventListener('change', () => { a.discord = webhook.value.trim(); save(); });
+    const showBtn = h('button', { class: 'btn quiet' }, 'Show');
+    showBtn.addEventListener('click', () => { const hidden = webhook.type === 'password'; webhook.type = hidden ? 'text' : 'password'; showBtn.textContent = hidden ? 'Hide' : 'Show'; });
+    const discordMsg = h('span', { class: 'fld-h', style: 'grid-column:auto' });
+    const discordTest = h('button', { class: 'btn quiet' }, 'Test Discord');
+    discordTest.addEventListener('click', async () => {
+      a.discord = webhook.value.trim(); save();
+      if (!a.discord) { discordMsg.textContent = 'No webhook URL'; return; }
+      discordMsg.textContent = 'Sending…';
+      const r = await postDiscord('TestPirate', { severe_count: 1, banned_xuids: ['test'], manual_tags: [{ tooltip: 'Test alert' }] }, 'severe', SOTREP);
+      discordMsg.textContent = r.ok ? 'Posted to Discord' : r.error;
+    });
+    const soundTest = h('button', { class: 'btn quiet' }, 'Test sound');
+    soundTest.addEventListener('click', () => playChime('severe'));
+    const twBox = h('input', { type: 'text', placeholder: 'twitch channel name', spellcheck: 'false', autocomplete: 'off', style: 'max-width:220px' });
+    const twMsg = h('span', { class: 'fld-h', style: 'grid-column:auto' });
+    const twTest = h('button', { class: 'btn quiet' }, 'Check Twitch');
+    const runTw = async () => {
+      const login = twBox.value.trim().replace(/^@/, '').replace(/^.*twitch\.tv\//, '').toLowerCase();
+      if (!login) return;
+      twMsg.textContent = 'Checking…';
+      const r = await fetchTwitchLive(login);
+      twMsg.textContent = r.error ? 'Twitch: ' + r.error : (r.live ? `${login} is LIVE` : `${login} is offline`) + (r.title ? ' · ' + r.title.slice(0, 80) : '');
+      if (r.live && state.alerts.streamers) fireStreamerAlert(login, login, r.title);
+    };
+    twTest.addEventListener('click', runTw);
+    twBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') runTw(); });
     const thr = h('select', {},
       h('option', { value: 'moderate' }, 'Orange and red (moderate or worse)'),
       h('option', { value: 'severe' }, 'Red only (severe or banned accounts)'));
@@ -309,8 +424,10 @@
     panelEl = h('div', { class: 'panel', style: 'display:none' },
       h('div', { class: 'panel-t' }, 'Alerts'),
       field('Trigger on', thr),
-      field('Sound', check('sound', 'Play a chime in this tab (works with the game in front, no permissions needed)')),
-      field('Discord', webhook, 'Paste a webhook URL for a private channel. Flagged players get posted there with the rep and a profile link.'),
+      field('Streamers', check('streamers', 'Alert when a player with a linked Twitch channel is live right now (purple pill links to the stream)'), 'Checked against Twitch when they appear and every 5 minutes while on the Recent board. Offline streamers just show their Twitch link.'),
+      field('', h('div', { class: 'row-ctl' }, twBox, twTest, twMsg), 'Type any Twitch channel to test the live check. A live one also fires the streamer alert.'),
+      field('Sound', h('div', { class: 'row-ctl' }, check('sound', 'Play a chime in this tab (works with the game in front, no permissions needed)'), soundTest)),
+      field('Discord', h('div', { class: 'row-ctl wide' }, webhook, showBtn, discordTest, discordMsg), 'Paste a webhook URL for a private channel. Flagged players get posted there with the rep and a profile link.'),
       field('Desktop', h('div', { class: 'row-ctl' }, check('desktop', 'Windows notification'), desktopBtn), 'Hidden behind a full-screen game; useful on a second screen only.'),
       h('div', { class: 'row-ctl' }, testAll, testMsg),
     );
@@ -459,6 +576,10 @@
         if ((rep.alts || []).length) tags.push(h('span', { class: 'tag' }, `${rep.alts.length} alt${rep.alts.length > 1 ? 's' : ''}`));
         if ((rep.account_count | 0) > 1) tags.push(h('span', { class: 'tag' }, `${rep.account_count} accounts`));
         if (rep.enriching && (entry.rechecks | 0) < MAX_RECHECKS) tags.push(h('span', { class: 'tag' }, 'updating…'));
+        const login = twitchLogin(rep);
+        const lv = liveEntry(login);
+        if (login && lv && lv.live) tags.unshift(h('a', { class: 'tag live', href: lv.url, target: '_blank', rel: 'noopener', title: lv.title || 'Live on Twitch' }, 'LIVE on Twitch'));
+        else if (login && !lv) tags.push(h('span', { class: 'tag' }, 'checking Twitch…'));
         const soc = (rep.socials || []).filter(s => s && !s.hidden && s.platform && s.platform !== 'playfab');
         soc.forEach((s, i) => {
           if (i) socials.push(h('span', { class: 'sep' }, '·'));
@@ -528,6 +649,8 @@
       }
       // anyone restored from a previous page load still needs their lookup if it is missing or stale
       for (const gt of session.order) if (!cacheFresh(gt) && !session.queue.includes(gt)) enqueue(gt);
+      // keep live status current for streamers on the Recent board
+      for (const gt of session.order) { const c = state.cache[gt]; if (c && c.rep && !c.rep.error) queueLiveCheck(gt, twitchLogin(c.rep)); }
       session.lastPoll = new Date();
       setStatus(statusLine());
       render();
@@ -594,6 +717,7 @@
       }
       // alert only on the first result for a player, not on enrichment re-checks
       if (!rep.error && session.order.includes(gt) && !(prev && prev.rep && !prev.rep.error)) fireAlerts(gt, rep);
+      if (!rep.error && session.order.includes(gt)) queueLiveCheck(gt, twitchLogin(rep));
       await new Promise(r => setTimeout(r, LOOKUP_GAP_MS));
     }
     session.busy = false;
