@@ -18,7 +18,7 @@ Independent personal tool. Not affiliated with, or endorsed by, SoT Rep, Rare or
 
 - Every 20 seconds it reads the same `Recently Met` data the seaofthieves.com friends page shows, using your normal seaofthieves.com login.
 - Any gamertag it has not seen before is a new encounter. It is looked up on sotrep.com the same way the site's own search box does, using your sotrep.com login, and shown on the board.
-- Lookups run one at a time, 1.5 s apart, and are cached for 24 hours. There is deliberately no bulk lookup.
+- Lookups run one at a time, 3 s apart, and are cached for 24 hours. There is deliberately no bulk lookup. If sotrep.com rate-limits you anyway, the board pauses lookups for the time it asks and carries on afterwards; the status line says so.
 - The first run takes the current list (around 180 names) as a baseline and does not look any of them up, so the board only shows genuinely new encounters.
 - Nothing touches the game client. The two calls are the same ones the two websites make themselves.
 
@@ -36,7 +36,7 @@ Updates arrive on their own, usually within a day. Tampermonkey menu, **Check fo
 
 Works the same in Firefox with the [Tampermonkey add-on](https://addons.mozilla.org/firefox/addon/tampermonkey/): install the add-on, open the install link at the top, click Install. Skip step 2 above; that toggle is a Chrome thing. Edge and Brave behave like Chrome, including step 2. Violentmonkey should also work but is untested; Greasemonkey will not, as it lacks the `GM_` functions this script uses.
 
-Whatever the browser, allow the one-time requests Tampermonkey shows for sotrep.com (and twitch.tv, discord.com if you use those alerts), or the board shows names with no reputation.
+Whatever the browser, allow the one-time requests Tampermonkey shows for sotrep.com (and twitch.tv, discord.com if you use those alerts). If a lookup sits on "queued…" for ages, that prompt is waiting for you: click the Tampermonkey toolbar icon while on the friends tab and choose **Always allow domain**. After 30 seconds the row says so and offers Retry.
 
 ## Using it
 

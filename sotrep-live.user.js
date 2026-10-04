@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      0.7.1
+// @version      0.7.4
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js
@@ -44,7 +44,7 @@
 
   const POLL_SECONDS = 20;        // how often to re-read Recently Met
   const CACHE_HOURS = 24;         // how long a SOTREP lookup is trusted before re-checking
-  const LOOKUP_GAP_MS = 1500;     // pause between SOTREP lookups so we never hammer the site
+  const LOOKUP_GAP_MS = 3000;     // pause between SOTREP lookups so we never hammer the site (their rate limiter bites below this)
   const RECENT_WINDOW_MIN = 20;   // players first seen within this window survive a refresh
   const SOTREP = 'https://www.sotrep.com';
   const RECENT_URL = '/api/users/get-recent-friends';
@@ -156,7 +156,7 @@
     .toggle input::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#8a93a0;transition:left .15s,background .15s}
     .toggle input:checked{background:#2f9e63}
     .toggle input:checked::after{left:14px;background:#fff}
-    .list,.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:8px;align-content:start}
+    .list,.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:8px;align-content:start}
     .list{padding:14px 16px 40px}
     .grid{grid-column:1/-1}
     .section{grid-column:1/-1;display:flex;align-items:baseline;gap:8px;color:#6f7986;font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin:6px 0 2px}
@@ -440,6 +440,15 @@
       const r = await postDiscord('TestPirate', { severe_count: 1, banned_xuids: ['test'], manual_tags: [{ tooltip: 'Test alert' }] }, 'severe', SOTREP);
       discordMsg.textContent = r.ok ? 'Posted to Discord' : r.error;
     });
+    const diagMsg = h('span', { class: 'fld-h', style: 'grid-column:auto' });
+    const diagBtn = h('button', { class: 'btn quiet' }, 'Test sotrep');
+    diagBtn.addEventListener('click', async () => {
+      diagMsg.textContent = 'Asking sotrep.com…';
+      const t0 = Date.now();
+      const r = await sotrepSearchAs('BigMephobia', 'xbox');
+      const ms = Date.now() - t0;
+      diagMsg.textContent = r.error ? `${ms} ms: ${r.error}` : `${ms} ms: ok, signed in${r.gamertag ? ' (found ' + r.gamertag + ')' : ''}`;
+    });
     const soundTest = h('button', { class: 'btn quiet' }, 'Test sound');
     soundTest.addEventListener('click', () => playChime('severe'));
     const twBox = h('input', { type: 'text', placeholder: 'twitch channel name', spellcheck: 'false', autocomplete: 'off', style: 'max-width:220px' });
@@ -484,6 +493,7 @@
       field('Discord', h('div', { class: 'row-ctl wide' }, webhook, showBtn, discordTest, discordMsg), 'Paste a webhook URL for a private channel. Flagged players get posted there with the rep and a profile link.'),
       field('Desktop', h('div', { class: 'row-ctl' }, check('desktop', 'Windows notification'), desktopBtn), 'Hidden behind a full-screen game; useful on a second screen only.'),
       h('div', { class: 'row-ctl' }, testAll, testMsg),
+      field('Connection', h('div', { class: 'row-ctl' }, diagBtn, diagMsg), 'One lookup against sotrep.com with the result and timing, for when rows sit on "queued" or show refusals.'),
     );
     return panelEl;
   }
@@ -732,7 +742,12 @@
     return xbox;
   }
   function sotrepSearchAs(query, type) {
-    return new Promise((resolve) => {
+    // Watchdog: Tampermonkey's own timeout only starts once the request is allowed. If its cross-site permission
+    // prompt is sitting unanswered, nothing ever fires, so resolve ourselves after 30 s with a pointer to the fix.
+    const watchdog = new Promise((resolve) => setTimeout(() => resolve({
+      error: 'no reply from sotrep.com. Click the Tampermonkey icon and allow access to sotrep.com, then Retry',
+    }), 30000));
+    return Promise.race([watchdog, new Promise((resolve) => {
       GM_xmlhttpRequest({
         method: 'POST',
         url: SOTREP + '/api/search',
@@ -740,14 +755,18 @@
         data: JSON.stringify({ query, search_type: type }),
         timeout: 20000,
         onload: (res) => {
+          // sotrep may say how long to wait; otherwise default to a minute
+          const ra = ((res.responseHeaders || '').match(/retry-after:\s*(\d+)/i) || [])[1];
+          const wait = ra ? Math.min(Math.max(parseInt(ra, 10), 30), 900) : 60;
+          const waitTxt = wait >= 120 ? `${Math.round(wait / 60)} minutes` : `${wait} seconds`;
           if (res.status === 401) return resolve({ error: 'sign in to sotrep.com', pause: 120 });
           if (res.status === 403) {
             let d = {}; try { d = JSON.parse(res.responseText) || {}; } catch (e) {}
             if (d.require_captcha) return resolve({ error: 'sotrep.com wants a captcha: open sotrep.com, search any name there, then retry', pause: 300 });
             if (d.error === 'username_requirements_not_met') return resolve({ error: 'sotrep.com needs your account set up: open sotrep.com and finish sign-up', pause: 300 });
-            return resolve({ error: 'sotrep.com refused (rate limit), paused for a minute', pause: 60 });
+            return resolve({ error: `sotrep.com rate limit, paused ${waitTxt}`, pause: wait });
           }
-          if (res.status === 429) return resolve({ error: 'sotrep.com rate limit, paused for a minute', pause: 60 });
+          if (res.status === 429) return resolve({ error: `sotrep.com rate limit, paused ${waitTxt}`, pause: wait });
           try {
             const j = JSON.parse(res.responseText);
             if (j.error) return resolve({ error: String(j.error) });
@@ -757,7 +776,7 @@
         onerror: () => resolve({ error: 'could not reach sotrep.com' }),
         ontimeout: () => resolve({ error: 'sotrep.com timed out' }),
       });
-    });
+    })]);
   }
 
   const MAX_RECHECKS = 2;   // how many times to go back for a player sotrep is "still enriching"
