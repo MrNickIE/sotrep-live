@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      0.8.0
+// @version      0.8.1
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js
@@ -672,9 +672,12 @@
       }
 
       const pic = (cur && cur.DisplayPicUrl) || (rep && rep.gamerpic_url) || '';
-      const presence = !cur ? ['', 'manual lookup']
-        : cur.IsPlayingSot ? ['sot', 'Playing SoT']
-        : cur.IsOnline ? ['on', 'Online'] : ['', 'Offline'];
+      // Rare passes on Xbox Live presence as your account sees it. "Offline" would be misleading on a board of
+      // people you just met, so the absence of a signal is shown as hidden rather than as a claim they are away.
+      const presence = !cur ? ['', 'manual lookup', '']
+        : cur.IsPlayingSot ? ['sot', 'Playing SoT', 'Xbox Live says this player is in Sea of Thieves right now']
+        : cur.IsOnline ? ['on', 'Online', 'Xbox Live says this player is online']
+        : ['', '', 'Xbox Live is not sharing this player\'s status with you (privacy setting or appear offline). They were on your server when first seen.'];
       const first = state.seen[gt] ? new Date(state.seen[gt]) : null;
       const queued = session.queue.includes(gt);
       // In history, unchecked names are not looked up automatically; offer a button instead
@@ -692,9 +695,9 @@
           ),
           (tags.length || socials.length) ? h('div', { class: 'meta' }, tags, socials.length ? h('span', { class: 'social' }, socials) : null) : null,
         ),
-        h('div', { class: 'side' },
-          h('div', { class: 'pres ' + presence[0] }, presence[1]),
-          first ? h('div', {}, withLookupBtn ? first.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : first.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })) : null,
+        h('div', { class: 'side', title: presence[2] },
+          presence[1] ? h('div', { class: 'pres ' + presence[0] }, presence[1]) : null,
+          first ? h('div', {}, (withLookupBtn ? '' : 'met ') + (withLookupBtn ? first.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : first.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))) : null,
         ),
       );
     }
