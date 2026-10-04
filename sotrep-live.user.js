@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      0.3.1
+// @version      0.3.2
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js
@@ -70,11 +70,12 @@
     view: 'recent',     // 'recent' | 'history'
   };
 
-  // Restore anyone first seen recently so a refresh does not wipe the board mid-session
+  // Restore anyone first seen recently so a refresh does not wipe the board mid-session.
+  // Baseline names (everyone present on the very first poll) are never "recent", whatever their stamp.
   {
     const cutoff = Date.now() - RECENT_WINDOW_MIN * 60e3;
     session.order = Object.entries(state.seen)
-      .filter(([, iso]) => Date.parse(iso) >= cutoff)
+      .filter(([, iso]) => iso !== state.baselineAt && Date.parse(iso) >= cutoff)
       .sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]))
       .map(([gt]) => gt);
   }
@@ -475,7 +476,7 @@
     enqueue(gt);
     render();
   }
-  function clearSession() { session.order = []; render(); }
+  function clearSession() { session.order = []; session.queue = []; render(); setStatus(statusLine()); }
   function resetAll() {
     state.seen = {}; state.cache = {}; state.baselined = false; state.baselineAt = null; save();
     session.order = []; session.queue = [];
