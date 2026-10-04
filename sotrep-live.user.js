@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      0.5.0
+// @version      0.5.1
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js
@@ -75,6 +75,7 @@
     lastPoll: null,
     count: 0,
     view: 'recent',     // 'recent' | 'history'
+    manual: new Set(),  // gamertags looked up by hand (Check box, History button): never alert on these
     live: new Map(),    // twitch login -> { at, live, title, url }
     liveQueue: [],
     liveBusy: false,
@@ -311,7 +312,7 @@
       session.live.set(login, { at: Date.now(), live: r.live, title: r.title || '', url: `https://www.twitch.tv/${login}`, error: r.error });
       render();
       // alert on the transition to live (or the first time we see them live), not on every re-check
-      if (r.live && !(prev && prev.live) && session.order.includes(gt)) fireStreamerAlert(gt, login, r.title);
+      if (r.live && !(prev && prev.live) && session.order.includes(gt) && !session.manual.has(gt)) fireStreamerAlert(gt, login, r.title);
       await new Promise(res => setTimeout(res, LIVE_GAP_MS));
     }
     session.liveBusy = false;
@@ -604,7 +605,7 @@
           h('div', { class: 'line' },
             h('a', { class: 'name', href: link, target: '_blank', rel: 'noopener' }, gt),
             h('span', { class: 'rep' }, repText),
-            needsLookup ? h('button', { class: 'mini', onclick: () => { enqueue(gt, true); render(); } }, 'Look up') : null,
+            needsLookup ? h('button', { class: 'mini', onclick: () => { session.manual.add(gt); enqueue(gt, true); render(); } }, 'Look up') : null,
           ),
           (tags.length || socials.length) ? h('div', { class: 'meta' }, tags, socials.length ? h('span', { class: 'social' }, socials) : null) : null,
         ),
@@ -660,13 +661,22 @@
   }
 
   // ---------- data: SOTREP ----------
-  function sotrepSearch(gamertag) {
+  // Try as an Xbox gamertag first; if sotrep has no such player, try the same text as a Twitch channel name,
+  // which resolves a streamer to their linked pirate.
+  async function sotrepSearch(gamertag) {
+    const xbox = await sotrepSearchAs(gamertag, 'xbox');
+    if (!xbox.error || !/not found/i.test(xbox.error)) return xbox;
+    const twitch = await sotrepSearchAs(gamertag, 'twitch');
+    if (!twitch.error) { twitch.resolved_via = 'twitch'; return twitch; }
+    return xbox;
+  }
+  function sotrepSearchAs(query, type) {
     return new Promise((resolve) => {
       GM_xmlhttpRequest({
         method: 'POST',
         url: SOTREP + '/api/search',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        data: JSON.stringify({ query: gamertag, search_type: 'xbox' }),
+        data: JSON.stringify({ query, search_type: type }),
         timeout: 20000,
         onload: (res) => {
           if (res.status === 401) return resolve({ error: 'sign in to sotrep.com' });
@@ -703,9 +713,18 @@
     if (session.busy) return;
     session.busy = true;
     while (session.queue.length) {
-      const gt = session.queue.shift();
+      let gt = session.queue.shift();
       setStatus(statusLine());
       const rep = await sotrepSearch(gt);
+      // typed a Twitch name (or a differently-cased gamertag): carry on under the real gamertag
+      if (!rep.error && rep.gamertag && rep.gamertag !== gt && !session.current.has(gt)) {
+        const real = rep.gamertag;
+        session.order = session.order.map(x => x === gt ? real : x).filter((x, i, a) => a.indexOf(x) === i);
+        if (session.manual.has(gt)) session.manual.add(real);
+        if (!state.seen[real]) state.seen[real] = state.seen[gt] || new Date().toISOString();
+        delete state.seen[gt]; delete state.cache[gt];
+        gt = real;
+      }
       const prev = state.cache[gt];
       const rechecks = prev && prev.rep && prev.rep.enriching ? (prev.rechecks | 0) + 1 : 0;
       state.cache[gt] = { at: Date.now(), rep, rechecks };
@@ -716,7 +735,7 @@
         setTimeout(() => { if (!session.queue.includes(gt)) { session.queue.push(gt); pump(); } }, 15000);
       }
       // alert only on the first result for a player, not on enrichment re-checks
-      if (!rep.error && session.order.includes(gt) && !(prev && prev.rep && !prev.rep.error)) fireAlerts(gt, rep);
+      if (!rep.error && session.order.includes(gt) && !session.manual.has(gt) && !(prev && prev.rep && !prev.rep.error)) fireAlerts(gt, rep);
       if (!rep.error && session.order.includes(gt)) queueLiveCheck(gt, twitchLogin(rep));
       await new Promise(r => setTimeout(r, LOOKUP_GAP_MS));
     }
@@ -729,6 +748,7 @@
     const gt = nameBox.value.trim();
     if (!gt) return;
     nameBox.value = '';
+    session.manual.add(gt);
     if (!session.order.includes(gt)) session.order.unshift(gt);
     if (!state.seen[gt]) state.seen[gt] = new Date().toISOString();
     delete state.cache[gt];   // you asked by hand, so always fetch fresh

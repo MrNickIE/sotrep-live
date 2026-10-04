@@ -29,7 +29,8 @@ The script carries `@updateURL` / `@downloadURL` pointing back at this repo, so 
 
 - **Recent** shows players first seen in the last 20 minutes (survives a refresh).
 - **History** shows everyone ever recorded, newest first, with a **Look up** button on anyone not yet checked. Names from the baseline sit in a collapsed group at the bottom.
-- **Check a gamertag** looks up any name you type, for players you spot in game before Rare registers them.
+- **Check a gamertag** looks up any name you type, for players you spot in game before Rare registers them. A Twitch channel name works too: if no pirate has that gamertag, sotrep is asked for the pirate linked to that Twitch account.
+- Alerts fire only for players the game registered on its own. Manual lookups (the Check box, History's Look up buttons) never alert.
 - **Alerts** opens the alert settings. A chime plays in the tab by default when a new player is orange (moderate) or red (severe or banned accounts); you can narrow it to red only. Paste a Discord webhook URL to have flagged players posted to a private channel with the rep summary and a profile link, which is the reliable route while a game has the screen. A Windows desktop notification is also available but is hidden behind a full-screen game. **Test alerts** fires every enabled channel once.
 - **Streamers**: a player whose sotrep profile links a Twitch channel is checked against Twitch when they appear and every five minutes while on the Recent board. If they are live, the row gets a purple **LIVE on Twitch** pill that opens the stream, and the streamer alert fires (chime, Discord embed with the stream link). Offline streamers just show their Twitch link. The panel has a box to test the live check against any channel name.
 - **Clear** empties the Recent board. **Reset** (press twice) forgets everything and re-baselines.
