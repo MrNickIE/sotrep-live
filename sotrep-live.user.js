@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      0.9.0
+// @version      0.9.1
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js
@@ -269,6 +269,22 @@
       },
     });
   }
+  // After the install link is clicked, Tampermonkey's dialog takes focus; when focus returns here the update has
+  // (probably) been applied, so reload to start running the new version. A cancelled dialog just reloads harmlessly.
+  let updateClickedAt = 0;
+  function armReloadOnReturn() {
+    updateClickedAt = Date.now();
+    setStatus('Update opened in a new tab. This board reloads itself when you come back.', false);
+  }
+  const maybeReload = () => {
+    if (updateClickedAt && Date.now() - updateClickedAt > 5000 && document.visibilityState === 'visible') {
+      updateClickedAt = 0;
+      setTimeout(() => location.reload(), 800);
+    }
+  };
+  window.addEventListener('focus', maybeReload);
+  document.addEventListener('visibilitychange', maybeReload);
+
   let bannerEl = null;
   function showUpdateBanner(latest, installedFromLink) {
     if (!bannerEl) return;
@@ -276,7 +292,7 @@
       latest
         ? h('span', {}, `Version ${latest} is out, you are on ${MY_VERSION}. `)
         : h('span', {}, 'This copy was pasted in by hand so it will never update. '),
-      h('a', { href: RAW_URL, target: '_blank', rel: 'noopener' }, latest && installedFromLink ? 'Update now' : 'Install from the link instead'),
+      h('a', { href: RAW_URL, target: '_blank', rel: 'noopener', onclick: armReloadOnReturn }, latest && installedFromLink ? 'Update now' : 'Install from the link instead'),
       latest && installedFromLink ? h('span', {}, ' (or Tampermonkey menu, Check for userscript updates)') : h('span', {}, ', then delete this copy in Tampermonkey.'),
     );
     bannerEl.style.display = '';
@@ -536,7 +552,7 @@
     const tabHistory = h('button', { class: 'tab', onclick: () => setView('history') }, 'History');
     session.setView = (v) => { session.view = v; tabRecent.classList.toggle('on', v === 'recent'); tabHistory.classList.toggle('on', v === 'history'); render(); };
 
-    versionEl = h('a', { class: 'ver', href: RAW_URL, target: '_blank', rel: 'noopener', title: 'Click to update or reinstall through Tampermonkey' }, 'v' + MY_VERSION);
+    versionEl = h('a', { class: 'ver', href: RAW_URL, target: '_blank', rel: 'noopener', title: 'Click to update or reinstall through Tampermonkey', onclick: armReloadOnReturn }, 'v' + MY_VERSION);
     const bar = h('div', { class: 'bar' },
       h('div', { class: 'brand' }, 'SOTREP ', h('b', {}, 'Live'), versionEl),
       h('div', { class: 'tabs' }, tabRecent, tabHistory),
