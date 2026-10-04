@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      0.9.2
+// @version      0.9.4
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js
@@ -107,18 +107,20 @@
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     .root{position:fixed;inset:0;z-index:2147483000;background:#0e1114;color:#e6e4dd;
       font:13px/1.45 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;overflow-y:auto}
-    .bar{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:10px;height:48px;padding:0 16px;
+    .bar{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;min-height:48px;padding:8px 16px;
       background:#141920;border-bottom:1px solid #222a34}
+    .bar .tabs{flex-shrink:0}
+    .controls{display:flex;align-items:center;gap:10px;margin-left:auto;flex-wrap:wrap}
     .brand{font-weight:700;font-size:14px;letter-spacing:.02em;white-space:nowrap}
     .brand b{color:#7fb7ff;font-weight:700}
     .ver{margin-left:8px;font-size:11px;font-weight:500;color:#6f7986;text-decoration:none;padding:1px 6px;border-radius:999px;border:1px solid #2a3340;vertical-align:middle}
     .ver:hover{color:#e6e4dd;border-color:#3a4454}
     .ver.stale{color:#e6b85c;border-color:#6b4a1a;background:#3a2d12}
-    .status{color:#8a93a0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
+    .status{color:#8a93a0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1 1 200px}
     .status .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#2f9e63;margin-right:6px;vertical-align:middle}
     .status .dot.err{background:#d6453d}
-    .search{display:flex;align-items:center;background:#0e1114;border:1px solid #2a3340;border-radius:6px;height:30px;overflow:hidden}
-    .search input{all:unset;width:190px;height:30px;padding:0 10px;color:#e6e4dd;font:12.5px ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
+    .search{display:flex;align-items:center;background:#0e1114;border:1px solid #2a3340;border-radius:6px;height:30px;overflow:hidden;flex:1 1 180px;max-width:260px}
+    .search input{all:unset;flex:1;min-width:0;height:30px;padding:0 10px;color:#e6e4dd;font:12.5px ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
     .search input::placeholder{color:#5e6875}
     .search button{all:unset;cursor:pointer;height:30px;padding:0 10px;color:#9fb3c8;font-size:12px;border-left:1px solid #2a3340}
     .search button:hover{background:#1b2230;color:#e6e4dd}
@@ -138,9 +140,9 @@
     .section.fold:hover{color:#aeb7c2}
     .section .hint{margin-left:auto;text-transform:none;letter-spacing:0;color:#7fb7ff;font-size:11px}
     .btn.on{background:#1f2733;color:#f2f1ec}
-    .banner{position:sticky;top:48px;z-index:2;background:#6b2320;color:#fff;padding:10px 16px;font-size:13px;border-bottom:1px solid #8a2f2b}
+    .banner{background:#6b2320;color:#fff;padding:10px 16px;font-size:13px;border-bottom:1px solid #8a2f2b}
     .banner a{color:#fff;font-weight:700;text-decoration:underline}
-    .panel{position:sticky;top:48px;z-index:1;background:#11161c;border-bottom:1px solid #222a34;padding:14px 16px 16px;display:grid;gap:12px;max-width:100%}
+    .panel{background:#11161c;border-bottom:1px solid #222a34;padding:14px 16px 16px;display:grid;gap:12px;max-width:100%}
     .panel-t{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#6f7986}
     .fld{display:grid;grid-template-columns:90px 1fr;gap:4px 14px;align-items:center;max-width:820px}
     .fld-l{color:#8a93a0;font-size:12px}
@@ -557,10 +559,12 @@
       h('div', { class: 'brand' }, 'SOTREP ', h('b', {}, 'Live'), versionEl),
       h('div', { class: 'tabs' }, tabRecent, tabHistory),
       statusEl,
-      h('div', { class: 'search' }, nameBox, h('button', { onclick: checkName }, 'Check')),
-      alertsBtn,
-      h('button', { class: 'btn quiet', onclick: clearSession, title: 'Clear the Recent board. Names stay remembered so they are not treated as new again.' }, 'Clear'),
-      twoPress('Reset', 'Really reset?', 'btn quiet', resetAll, 'Forget all remembered names and cached lookups and re-baseline. Press twice.'),
+      h('div', { class: 'controls' },
+        h('div', { class: 'search' }, nameBox, h('button', { onclick: checkName }, 'Check')),
+        alertsBtn,
+        h('button', { class: 'btn quiet', onclick: clearSession, title: 'Clear the Recent board. Names stay remembered so they are not treated as new again.' }, 'Clear'),
+        twoPress('Reset', 'Really reset?', 'btn quiet', resetAll, 'Forget all remembered names and cached lookups and re-baseline. Press twice.'),
+      ),
     );
     listEl = h('div', { class: 'list' });
     bannerEl = h('div', { class: 'banner', style: 'display:none' });
@@ -681,7 +685,7 @@
         const login = twitchLogin(rep);
         const lv = liveEntry(login);
         if (login && lv && lv.live) tags.unshift(h('a', { class: 'tag live', href: lv.url, target: '_blank', rel: 'noopener', title: lv.title || 'Live on Twitch' }, 'LIVE on Twitch'));
-        else if (login && !lv) tags.push(h('span', { class: 'tag' }, 'checking Twitch…'));
+        else if (login && !lv && session.liveQueue.some(q => q.login === login)) tags.push(h('span', { class: 'tag' }, 'checking Twitch…'));
         const soc = (rep.socials || []).filter(s => s && !s.hidden && s.platform && s.platform !== 'playfab');
         soc.forEach((s) => {
           const label = s.username || s.platform;
