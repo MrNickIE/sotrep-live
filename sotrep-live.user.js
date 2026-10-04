@@ -1,0 +1,486 @@
+// ==UserScript==
+// @name         SOTREP Live - players I meet
+// @namespace    https://www.sotrep.com/
+// @version      0.3.0
+// @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
+// @match        https://www.seaofthieves.com/friends*
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_notification
+// @connect      www.sotrep.com
+// @connect      sotrep.com
+// @run-at       document-idle
+// ==/UserScript==
+
+/*
+  How it works
+  - Polls https://www.seaofthieves.com/api/users/get-recent-friends (your own login) every POLL_SECONDS.
+  - Any gamertag not seen before is a new encounter. It is looked up on sotrep.com via POST /api/search
+    (again your own login) and shown at the top of the board with a colour-coded reputation.
+  - Everything is cached locally so a player is only looked up once per CACHE_HOURS.
+  - Players first seen in the last RECENT_WINDOW_MIN minutes (20) stay on the board across a page refresh.
+  - History view lists every name ever recorded, newest first, with a per-row "Look up" button for anyone
+    not yet checked. There is deliberately no bulk lookup, to stay gentle on sotrep.com.
+  - Reset needs two presses: the first arms the button for a few seconds, the second fires.
+  - The board renders inside a Shadow DOM so the Sea of Thieves site styles cannot leak into it.
+  - Nothing touches the game. Both calls are the same ones the two websites make themselves.
+
+  First run: the current list (up to ~180 names) is taken as the baseline and NOT looked up, so you only see
+  genuinely new encounters from now on. Those names sit in a collapsed group at the bottom of History.
+*/
+
+(function () {
+  'use strict';
+
+  const POLL_SECONDS = 20;        // how often to re-read Recently Met
+  const CACHE_HOURS = 24;         // how long a SOTREP lookup is trusted before re-checking
+  const LOOKUP_GAP_MS = 1500;     // pause between SOTREP lookups so we never hammer the site
+  const RECENT_WINDOW_MIN = 20;   // players first seen within this window survive a refresh
+  const SOTREP = 'https://www.sotrep.com';
+  const RECENT_URL = '/api/users/get-recent-friends';
+
+  // ---------- persistent state ----------
+  const state = {
+    seen: GM_getValue('seen', {}),        // gamertag -> first seen ISO time
+    cache: GM_getValue('cache', {}),      // gamertag -> { at, rep }
+    baselined: GM_getValue('baselined', false),
+    baselineAt: GM_getValue('baselineAt', null),   // ISO stamp shared by every name in the first poll
+    notifyFlagged: GM_getValue('notifyFlagged', true),
+  };
+  const save = () => {
+    GM_setValue('seen', state.seen);
+    GM_setValue('cache', state.cache);
+    GM_setValue('baselined', state.baselined);
+    GM_setValue('baselineAt', state.baselineAt);
+    GM_setValue('notifyFlagged', state.notifyFlagged);
+  };
+
+  // in-memory
+  const session = {
+    order: [],          // gamertags on the board, newest first
+    current: new Map(), // gamertag -> {IsOnline, IsPlayingSot, DisplayPicUrl}
+    queue: [],
+    busy: false,
+    lastPoll: null,
+    count: 0,
+    view: 'recent',     // 'recent' | 'history'
+  };
+
+  // Restore anyone first seen recently so a refresh does not wipe the board mid-session
+  {
+    const cutoff = Date.now() - RECENT_WINDOW_MIN * 60e3;
+    session.order = Object.entries(state.seen)
+      .filter(([, iso]) => Date.parse(iso) >= cutoff)
+      .sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]))
+      .map(([gt]) => gt);
+  }
+
+  // ---------- UI (inside a shadow root so site CSS cannot reach it) ----------
+  const css = `
+    :host{all:initial}
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    .root{position:fixed;inset:0;z-index:2147483000;background:#0e1114;color:#e6e4dd;
+      font:13px/1.45 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;overflow-y:auto}
+    .bar{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:10px;height:48px;padding:0 16px;
+      background:#141920;border-bottom:1px solid #222a34}
+    .brand{font-weight:700;font-size:14px;letter-spacing:.02em;white-space:nowrap}
+    .brand b{color:#7fb7ff;font-weight:700}
+    .status{color:#8a93a0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
+    .status .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#2f9e63;margin-right:6px;vertical-align:middle}
+    .status .dot.err{background:#d6453d}
+    .search{display:flex;align-items:center;background:#0e1114;border:1px solid #2a3340;border-radius:6px;height:30px;overflow:hidden}
+    .search input{all:unset;width:190px;height:30px;padding:0 10px;color:#e6e4dd;font:12.5px ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
+    .search input::placeholder{color:#5e6875}
+    .search button{all:unset;cursor:pointer;height:30px;padding:0 10px;color:#9fb3c8;font-size:12px;border-left:1px solid #2a3340}
+    .search button:hover{background:#1b2230;color:#e6e4dd}
+    .btn{all:unset;cursor:pointer;height:30px;padding:0 10px;border-radius:6px;border:1px solid #2a3340;background:#161c24;color:#c7cdd6;font-size:12px;white-space:nowrap}
+    .btn:hover{background:#1f2733;color:#fff}
+    .btn.quiet{border-color:transparent;background:transparent;color:#8a93a0}
+    .btn.quiet:hover{background:#1f2733;color:#e6e4dd}
+    .btn.armed,.btn.armed:hover{background:#6b2320;border-color:#8a2f2b;color:#fff}
+    .tabs{display:flex;background:#0e1114;border:1px solid #2a3340;border-radius:6px;height:30px;overflow:hidden}
+    .tab{all:unset;cursor:pointer;height:30px;padding:0 12px;font-size:12px;color:#8a93a0}
+    .tab:hover{color:#e6e4dd}
+    .tab.on{background:#1f2733;color:#f2f1ec}
+    .mini{all:unset;cursor:pointer;font-size:11px;line-height:18px;height:18px;padding:0 8px;border-radius:4px;border:1px solid #2a3340;color:#9fb3c8}
+    .mini:hover{background:#1f2733;color:#fff}
+    .row.unchecked{opacity:.75}
+    .section.fold{cursor:pointer;margin-top:18px;user-select:none}
+    .section.fold:hover{color:#aeb7c2}
+    .section .hint{margin-left:auto;text-transform:none;letter-spacing:0;color:#7fb7ff;font-size:11px}
+    .toggle{display:flex;align-items:center;gap:6px;color:#8a93a0;font-size:12px;white-space:nowrap;cursor:pointer;user-select:none}
+    .toggle input{all:unset;width:28px;height:16px;border-radius:999px;background:#2a3340;position:relative;transition:background .15s;cursor:pointer}
+    .toggle input::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#8a93a0;transition:left .15s,background .15s}
+    .toggle input:checked{background:#2f9e63}
+    .toggle input:checked::after{left:14px;background:#fff}
+    .list{padding:14px 16px 40px;max-width:980px}
+    .section{display:flex;align-items:baseline;gap:8px;color:#6f7986;font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin:6px 0 10px}
+    .section span{color:#4c5663}
+    .empty{color:#6f7986;padding:28px 0;font-size:13px}
+    .row{display:grid;grid-template-columns:40px 1fr auto;gap:12px;align-items:center;padding:10px 12px 10px 10px;margin-bottom:6px;
+      border-radius:8px;background:#141920;border:1px solid #1d2531;border-left:3px solid #3a4454}
+    .row.clean{border-left-color:#2f9e63}
+    .row.light{border-left-color:#c9a227}
+    .row.moderate{border-left-color:#e07b2a}
+    .row.severe{border-left-color:#d6453d;background:#1a1416}
+    .row.pending{opacity:.65}
+    .pic{width:40px;height:40px;border-radius:6px;background:#1f2733;object-fit:cover;display:flex;align-items:center;justify-content:center;
+      color:#8a93a0;font-weight:700;font-size:16px}
+    .main{min-width:0}
+    .line{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;min-width:0}
+    .name{font-weight:600;font-size:14px;color:#f2f1ec;text-decoration:none}
+    .name:hover{text-decoration:underline}
+    .rep{font-size:12px;color:#8a93a0}
+    .row.clean .rep{color:#4fb57f}
+    .row.light .rep{color:#d7b545}
+    .row.moderate .rep{color:#eb9150}
+    .row.severe .rep{color:#ef6b63;font-weight:600}
+    .meta{display:flex;flex-wrap:wrap;gap:4px 6px;margin-top:5px;align-items:center}
+    .tag{font-size:11px;line-height:18px;height:18px;padding:0 7px;border-radius:4px;background:#1f2733;color:#aeb7c2;white-space:nowrap}
+    .tag.amber{background:#3a2d12;color:#e6b85c}
+    .tag.green{background:#143426;color:#6fcf97}
+    .tag.red{background:#44201e;color:#f08a84}
+    .social{font-size:11px;color:#6f7986;white-space:nowrap}
+    .social a{color:#7fb7ff;text-decoration:none}
+    .social a:hover{text-decoration:underline}
+    .social .sep{margin:0 5px;color:#3a4454}
+    .side{text-align:right;font-size:11.5px;color:#6f7986;white-space:nowrap;line-height:1.5}
+    .side .pres{color:#8a93a0}
+    .side .pres.on{color:#4fb57f}
+    .side .pres.sot{color:#7fb7ff}
+  `;
+
+  function h(tag, attrs, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (k === 'class') el.className = v;
+      else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+      else if (k === 'html') el.innerHTML = v;
+      else el.setAttribute(k, v);
+    }
+    for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+    return el;
+  }
+
+  // A button that must be pressed twice: first press arms it (label changes, turns red) for 4 s, second press fires.
+  function twoPress(label, armedLabel, cls, action, title) {
+    let armed = null;
+    const btn = h('button', { class: cls, title }, label);
+    const disarm = () => { armed = null; btn.textContent = label; btn.classList.remove('armed'); };
+    btn.addEventListener('click', () => {
+      if (armed) { clearTimeout(armed); disarm(); action(); return; }
+      btn.textContent = armedLabel; btn.classList.add('armed');
+      armed = setTimeout(disarm, 4000);
+    });
+    return btn;
+  }
+
+  let listEl, statusEl, nameBox;
+  function setView(v) { session.setView(v); }
+  function buildUI() {
+    const host = document.createElement('div');
+    host.id = 'sotrep-live-host';
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.append(h('style', { html: css }));
+
+    statusEl = h('span', { class: 'status' }, h('span', { class: 'dot' }), 'Starting…');
+
+    nameBox = h('input', { type: 'text', placeholder: 'Check a gamertag', spellcheck: 'false', autocomplete: 'off' });
+    nameBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') checkName(); });
+
+    const notify = h('input', { type: 'checkbox' });
+    notify.checked = state.notifyFlagged;
+    notify.addEventListener('change', () => { state.notifyFlagged = notify.checked; save(); });
+
+    const tabRecent = h('button', { class: 'tab on', onclick: () => setView('recent') }, 'Recent');
+    const tabHistory = h('button', { class: 'tab', onclick: () => setView('history') }, 'History');
+    session.setView = (v) => { session.view = v; tabRecent.classList.toggle('on', v === 'recent'); tabHistory.classList.toggle('on', v === 'history'); render(); };
+
+    const bar = h('div', { class: 'bar' },
+      h('div', { class: 'brand' }, 'SOTREP ', h('b', {}, 'Live')),
+      h('div', { class: 'tabs' }, tabRecent, tabHistory),
+      statusEl,
+      h('div', { class: 'search' }, nameBox, h('button', { onclick: checkName }, 'Check')),
+      h('label', { class: 'toggle', title: 'Desktop notification when a new player is orange or red' }, notify, 'Alerts'),
+      h('button', { class: 'btn quiet', onclick: clearSession, title: 'Clear the Recent board. Names stay remembered so they are not treated as new again.' }, 'Clear'),
+      twoPress('Reset', 'Really reset?', 'btn quiet', resetAll, 'Forget all remembered names and cached lookups and re-baseline. Press twice.'),
+    );
+    listEl = h('div', { class: 'list' });
+    shadow.append(h('div', { class: 'root' }, bar, listEl));
+    document.body.append(host);
+    document.title = 'SOTREP Live';
+    render();
+  }
+
+  function setStatus(txt, err) {
+    statusEl.replaceChildren(h('span', { class: 'dot' + (err ? ' err' : '') }), txt);
+  }
+  function statusLine() {
+    const t = session.lastPoll ? session.lastPoll.toLocaleTimeString('en-GB') : '…';
+    const q = session.queue.length ? ` · ${session.queue.length} lookup${session.queue.length > 1 ? 's' : ''} queued` : '';
+    return `${session.count} in Recently Met · checked ${t}${q}`;
+  }
+
+  function repClass(rep) {
+    if (!rep) return 'pending';
+    if (rep.error) return '';
+    if ((rep.severe_count | 0) > 0 || (rep.banned_xuids || []).length > 0) return 'severe';
+    if ((rep.moderate_count | 0) > 0) return 'moderate';
+    if ((rep.light_count | 0) > 0) return 'light';
+    return 'clean';
+  }
+  function repLabel(rep) {
+    if (!rep) return 'looking up…';
+    if (rep.error) return rep.error;
+    const parts = [];
+    if ((rep.banned_xuids || []).length) parts.push(`${rep.banned_xuids.length} banned account${rep.banned_xuids.length > 1 ? 's' : ''}`);
+    if (rep.severe_count) parts.push(`${rep.severe_count} severe`);
+    if (rep.moderate_count) parts.push(`${rep.moderate_count} moderate`);
+    if (rep.light_count) parts.push(`${rep.light_count} light`);
+    if (!parts.length) return rep.reputation_override || 'Clean';
+    return parts.join(' · ');
+  }
+  const tagName = (t) => typeof t === 'string' ? t : (t.tooltip || t.name || t.label || t.title || t.slug || 'tag');
+
+  // Baseline names all share the timestamp of the very first poll; anything with that stamp was met before tracking began
+  function baselineStamp() {
+    if (state.baselineAt) return state.baselineAt;
+    const stamps = Object.values(state.seen);
+    if (!stamps.length) return null;
+    const counts = {};
+    for (const s of stamps) counts[s] = (counts[s] | 0) + 1;
+    const [best, n] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+    return n > 20 ? best : null;   // only a big cluster counts as the baseline
+  }
+  function dayLabel(d) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const that = new Date(d); that.setHours(0, 0, 0, 0);
+    const diff = Math.round((today - that) / 864e5);
+    if (diff === 0) return 'Today';
+    if (diff === 1) return 'Yesterday';
+    return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  }
+
+  function render() {
+    listEl.replaceChildren();
+    if (session.view === 'history') return renderHistory();
+    if (!session.order.length) {
+      listEl.append(h('div', { class: 'empty' }, state.baselined
+        ? `Watching. ${Object.keys(state.seen).length} names remembered; new encounters appear here as the game registers them. History shows everyone seen so far.`
+        : 'Taking baseline…'));
+      return;
+    }
+    listEl.append(h('div', { class: 'section' }, 'Recent encounters', h('span', {}, session.order.length)));
+    for (const gt of session.order) listEl.append(renderRow(gt, false));
+  }
+
+  function renderHistory() {
+    const base = baselineStamp();
+    const all = Object.entries(state.seen).sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]));
+    const tracked = all.filter(([, iso]) => iso !== base);
+    const baseline = all.filter(([, iso]) => iso === base);
+    if (!tracked.length && !baseline.length) { listEl.append(h('div', { class: 'empty' }, 'Nothing recorded yet.')); return; }
+    let lastDay = null;
+    for (const [gt, iso] of tracked) {
+      const day = dayLabel(new Date(iso));
+      if (day !== lastDay) { listEl.append(h('div', { class: 'section' }, day)); lastDay = day; }
+      listEl.append(renderRow(gt, true));
+    }
+    if (baseline.length) {
+      const body = h('div', {});
+      const fill = () => { body.replaceChildren(); for (const [gt] of baseline.sort((a, b) => a[0].localeCompare(b[0]))) body.append(renderRow(gt, true)); };
+      const apply = () => { body.style.display = session.foldOpen ? '' : 'none'; head.querySelector('.hint').textContent = session.foldOpen ? 'hide' : 'show'; if (session.foldOpen) fill(); };
+      const head = h('div', { class: 'section fold' }, `Met before tracking started`, h('span', {}, baseline.length), h('span', { class: 'hint' }, 'show'));
+      head.addEventListener('click', () => { session.foldOpen = !session.foldOpen; apply(); });
+      listEl.append(head, body);
+      apply();   // the 20 s poll re-renders, so keep whatever state the fold was in
+    }
+  }
+
+  function renderRow(gt, withLookupBtn) {
+    {
+      const cur = session.current.get(gt);
+      const entry = state.cache[gt];
+      const rep = entry && entry.rep;
+      const cls = repClass(rep);
+      const link = rep && rep.profile_id ? `${SOTREP}/search/${rep.profile_id}` : `${SOTREP}/`;
+
+      const tags = [];
+      const socials = [];
+      if (rep && !rep.error) {
+        for (const t of rep.manual_tags || []) tags.push(h('span', { class: 'tag amber' }, tagName(t)));
+        for (const b of rep.badges || []) tags.push(h('span', { class: 'tag green' }, tagName(b)));
+        if (rep.pc_check_status) tags.push(h('span', { class: 'tag ' + (/fail/i.test(rep.pc_check_status) ? 'red' : /pass/i.test(rep.pc_check_status) ? 'green' : '') }, `PC check ${rep.pc_check_status}`));
+        if ((rep.alts || []).length) tags.push(h('span', { class: 'tag' }, `${rep.alts.length} alt${rep.alts.length > 1 ? 's' : ''}`));
+        if ((rep.account_count | 0) > 1) tags.push(h('span', { class: 'tag' }, `${rep.account_count} accounts`));
+        if (rep.enriching && (entry.rechecks | 0) < MAX_RECHECKS) tags.push(h('span', { class: 'tag' }, 'updating…'));
+        const soc = (rep.socials || []).filter(s => s && !s.hidden && s.platform && s.platform !== 'playfab');
+        soc.forEach((s, i) => {
+          if (i) socials.push(h('span', { class: 'sep' }, '·'));
+          const label = s.username || s.platform;
+          socials.push(s.link ? h('a', { href: s.link, target: '_blank', rel: 'noopener', title: s.platform }, label) : h('span', { title: s.platform }, label));
+        });
+      }
+
+      const pic = (cur && cur.DisplayPicUrl) || (rep && rep.gamerpic_url) || '';
+      const presence = !cur ? ['', 'manual lookup']
+        : cur.IsPlayingSot ? ['sot', 'Playing SoT']
+        : cur.IsOnline ? ['on', 'Online'] : ['', 'Offline'];
+      const first = state.seen[gt] ? new Date(state.seen[gt]) : null;
+      const queued = session.queue.includes(gt);
+      // In history, unchecked names are not looked up automatically; offer a button instead
+      const needsLookup = withLookupBtn && !entry && !queued;
+      const repText = needsLookup ? 'not checked' : queued && !entry ? 'queued…' : repLabel(rep);
+
+      return h('div', { class: 'row ' + (needsLookup ? 'unchecked' : cls) },
+        pic ? h('img', { class: 'pic', src: pic, alt: '' }) : h('div', { class: 'pic' }, gt.trim().charAt(0).toUpperCase()),
+        h('div', { class: 'main' },
+          h('div', { class: 'line' },
+            h('a', { class: 'name', href: link, target: '_blank', rel: 'noopener' }, gt),
+            h('span', { class: 'rep' }, repText),
+            needsLookup ? h('button', { class: 'mini', onclick: () => { enqueue(gt, true); render(); } }, 'Look up') : null,
+          ),
+          (tags.length || socials.length) ? h('div', { class: 'meta' }, tags, socials.length ? h('span', { class: 'social' }, socials) : null) : null,
+        ),
+        h('div', { class: 'side' },
+          h('div', { class: 'pres ' + presence[0] }, presence[1]),
+          first ? h('div', {}, withLookupBtn ? first.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : first.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })) : null,
+        ),
+      );
+    }
+  }
+
+  // ---------- data: Recently Met ----------
+  async function fetchRecent() {
+    const r = await fetch(RECENT_URL, { headers: { Accept: 'application/json' } });
+    if (r.status === 401 || r.status === 403) throw new Error('Not logged in to seaofthieves.com (reload and sign in)');
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('json')) throw new Error('Unexpected reply from seaofthieves.com (session expired?)');
+    const j = await r.json();
+    if (!Array.isArray(j)) throw new Error('Unexpected shape from get-recent-friends');
+    return j;
+  }
+
+  async function poll() {
+    try {
+      const list = await fetchRecent();
+      session.count = list.length;
+      const now = new Date().toISOString();
+      const fresh = [];
+      for (const p of list) {
+        if (!p || !p.Gamertag) continue;
+        session.current.set(p.Gamertag, p);
+        if (!state.seen[p.Gamertag]) {
+          state.seen[p.Gamertag] = now;
+          if (state.baselined) fresh.push(p.Gamertag);
+        }
+      }
+      if (!state.baselined) { state.baselined = true; state.baselineAt = now; }
+      save();
+      for (const gt of fresh) {
+        if (!session.order.includes(gt)) session.order.unshift(gt);
+        enqueue(gt);
+      }
+      // anyone restored from a previous page load still needs their lookup if it is missing or stale
+      for (const gt of session.order) if (!cacheFresh(gt) && !session.queue.includes(gt)) enqueue(gt);
+      session.lastPoll = new Date();
+      setStatus(statusLine());
+      render();
+    } catch (e) {
+      setStatus('Problem: ' + (e.message || String(e)), true);
+    }
+  }
+
+  // ---------- data: SOTREP ----------
+  function sotrepSearch(gamertag) {
+    return new Promise((resolve) => {
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: SOTREP + '/api/search',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        data: JSON.stringify({ query: gamertag, search_type: 'xbox' }),
+        timeout: 20000,
+        onload: (res) => {
+          if (res.status === 401) return resolve({ error: 'sign in to sotrep.com' });
+          if (res.status === 403) return resolve({ error: 'sotrep.com refused (captcha or rate limit)' });
+          try {
+            const j = JSON.parse(res.responseText);
+            if (j.error) return resolve({ error: String(j.error) });
+            resolve(j);
+          } catch (e) { resolve({ error: 'bad reply from sotrep.com' }); }
+        },
+        onerror: () => resolve({ error: 'could not reach sotrep.com' }),
+        ontimeout: () => resolve({ error: 'sotrep.com timed out' }),
+      });
+    });
+  }
+
+  const MAX_RECHECKS = 2;   // how many times to go back for a player sotrep is "still enriching"
+  function cacheFresh(gt) {
+    const c = state.cache[gt];
+    if (!c || !c.rep || c.rep.error) return false;
+    if ((Date.now() - c.at) >= CACHE_HOURS * 3600e3) return false;
+    // still enriching: stale only while we have re-checks left
+    if (c.rep.enriching && (c.rechecks | 0) < MAX_RECHECKS) return false;
+    return true;
+  }
+
+  function enqueue(gt, force) {
+    if (!force && cacheFresh(gt)) return;
+    if (!session.queue.includes(gt)) session.queue.push(gt);
+    pump();
+  }
+
+  async function pump() {
+    if (session.busy) return;
+    session.busy = true;
+    while (session.queue.length) {
+      const gt = session.queue.shift();
+      setStatus(statusLine());
+      const rep = await sotrepSearch(gt);
+      const prev = state.cache[gt];
+      const rechecks = prev && prev.rep && prev.rep.enriching ? (prev.rechecks | 0) + 1 : 0;
+      state.cache[gt] = { at: Date.now(), rep, rechecks };
+      save();
+      render();
+      if (rep.enriching && !rep.error && rechecks < MAX_RECHECKS) {
+        // SOTREP is still resolving this player in the background; go back for the rest shortly.
+        setTimeout(() => { if (!session.queue.includes(gt)) { session.queue.push(gt); pump(); } }, 15000);
+      }
+      if (state.notifyFlagged && session.order.includes(gt)) {
+        const cls = repClass(rep);
+        if (cls === 'severe' || cls === 'moderate') {
+          try { GM_notification({ title: `SOTREP: ${gt}`, text: repLabel(rep), timeout: 8000, onclick: () => window.focus() }); } catch (e) {}
+        }
+      }
+      await new Promise(r => setTimeout(r, LOOKUP_GAP_MS));
+    }
+    session.busy = false;
+    if (session.lastPoll) setStatus(statusLine());
+  }
+
+  // ---------- actions ----------
+  function checkName() {
+    const gt = nameBox.value.trim();
+    if (!gt) return;
+    nameBox.value = '';
+    if (!session.order.includes(gt)) session.order.unshift(gt);
+    if (!state.seen[gt]) state.seen[gt] = new Date().toISOString();
+    delete state.cache[gt];   // you asked by hand, so always fetch fresh
+    save();
+    enqueue(gt);
+    render();
+  }
+  function clearSession() { session.order = []; render(); }
+  function resetAll() {
+    state.seen = {}; state.cache = {}; state.baselined = false; state.baselineAt = null; save();
+    session.order = []; session.queue = [];
+    poll();
+  }
+
+  // ---------- go ----------
+  buildUI();
+  poll();
+  setInterval(poll, POLL_SECONDS * 1000);
+})();
