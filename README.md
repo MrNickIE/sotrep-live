@@ -52,6 +52,6 @@ Left edge and reputation text: green clean, yellow light flags, orange moderate,
 
 ## Limits
 
-- Rare's list has no timestamps and no "met again" signal, so a player you met before tracking started never shows as new. Use History or Check a gamertag for those.
+- Rare's list has no timestamps and no direct "met again" signal. The board infers it: the list is capped and rolling, so a name that has dropped off and comes back is treated as meeting them again (back to the top of Recent, alerts apply). Someone you met very recently who is still in the list will not re-trigger; they are already on Recent. Players from before tracking started show as new only once they have dropped off and returned.
 - "Online" and "Playing SoT" come from Rare, which gets them from Xbox Live presence, so they only appear when the other player's privacy settings allow it. When Xbox shares nothing the row shows just the time you met them; it never claims someone is offline, since they were on your server when they appeared.
 - Pictures come from Rare's list; manual lookups get a lettered placeholder unless sotrep.com holds an image.

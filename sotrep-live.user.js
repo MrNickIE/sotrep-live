@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      0.8.1
+// @version      0.9.0
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js
@@ -55,6 +55,8 @@
     cache: GM_getValue('cache', {}),      // gamertag -> { at, rep }
     baselined: GM_getValue('baselined', false),
     baselineAt: GM_getValue('baselineAt', null),   // ISO stamp shared by every name in the first poll
+    inList: GM_getValue('inList', null),           // gamertag -> true for everyone present at the last poll (null until first poll)
+    missing: GM_getValue('missing', {}),           // gamertag -> consecutive polls absent from the list
     alerts: Object.assign(
       { sound: true, discord: '', desktop: false, severe: true, moderate: true, streamers: true },
       GM_getValue('alerts', {}),
@@ -67,6 +69,8 @@
     GM_setValue('cache', state.cache);
     GM_setValue('baselined', state.baselined);
     GM_setValue('baselineAt', state.baselineAt);
+    GM_setValue('inList', state.inList);
+    GM_setValue('missing', state.missing);
     GM_setValue('alerts', state.alerts);
   };
 
@@ -720,18 +724,33 @@
       session.count = list.length;
       const now = new Date().toISOString();
       const fresh = [];
+      const MISSING_POLLS = 2;   // a name must be gone this many polls before its return counts as meeting them again
+      const present = {};
       for (const p of list) {
         if (!p || !p.Gamertag) continue;
-        session.current.set(p.Gamertag, p);
-        if (!state.seen[p.Gamertag]) {
-          state.seen[p.Gamertag] = now;
-          if (state.baselined) fresh.push(p.Gamertag);
+        const gt = p.Gamertag;
+        present[gt] = true;
+        session.current.set(gt, p);
+        if (!state.seen[gt]) {
+          // never seen: a new encounter
+          state.seen[gt] = now;
+          if (state.baselined) fresh.push(gt);
+        } else if (state.inList && !state.inList[gt] && (state.missing[gt] | 0) >= MISSING_POLLS) {
+          // seen before, dropped off Rare's rolling list, now back: you met them again
+          state.seen[gt] = now;
+          delete state.cache[gt];   // rep may have changed since last time
+          fresh.push(gt);
         }
+        delete state.missing[gt];
       }
+      // count how long each previously-listed name has been absent
+      if (state.inList) for (const gt of Object.keys(state.inList)) if (!present[gt]) state.missing[gt] = (state.missing[gt] | 0) + 1;
+      state.inList = present;
       if (!state.baselined) { state.baselined = true; state.baselineAt = now; }
       save();
       for (const gt of fresh) {
-        if (!session.order.includes(gt)) session.order.unshift(gt);
+        session.order = [gt, ...session.order.filter(x => x !== gt)];   // to the top, even if already on the board
+        session.manual.delete(gt);                                        // the game found them this time, so alerts apply
         enqueue(gt);
       }
       // anyone restored from a previous page load still needs their lookup if it is missing or stale.
