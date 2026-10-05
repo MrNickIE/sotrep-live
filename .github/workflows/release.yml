@@ -1,9 +1,13 @@
-# Builds a GitHub release when a v* tag is pushed, with sotrep-live.user.js attached.
-# Checks run first so a bad tag never produces a release.
+# Builds a GitHub release with sotrep-live.user.js attached.
+# Two ways to start it:
+#   - Run workflow (Actions tab, or the API) on a branch: tags that commit with v + @version and releases it.
+#   - Push a v* tag by hand: releases that tag.
+# Checks run first so a bad version never produces a release.
 
 name: Release
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - 'v*'
@@ -16,18 +20,28 @@ jobs:
     runs-on: ubuntu-latest
     env:
       LC_ALL: C.UTF-8
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Tag matches @version
+      - name: Work out the tag
         run: |
-          tag="${GITHUB_REF_NAME#v}"
           ver=$(grep -m1 -oP '^// @version\s+\K\S+' sotrep-live.user.js)
-          echo "Tag $tag, script $ver"
-          if [ "$tag" != "$ver" ]; then
-            echo "::error::Tag v$tag does not match @version $ver in sotrep-live.user.js"
-            exit 1
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            tag="$GITHUB_REF_NAME"
+            if [ "$tag" != "v$ver" ]; then
+              echo "::error::Tag $tag does not match @version $ver in sotrep-live.user.js"
+              exit 1
+            fi
+          else
+            tag="v$ver"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "::error::Release $tag already exists. Bump @version first."
+              exit 1
+            fi
           fi
+          echo "Releasing $tag from $GITHUB_SHA"
+          echo "TAG=$tag" >> "$GITHUB_ENV"
 
       - name: Meta file matches script header
         run: |
@@ -49,14 +63,13 @@ jobs:
           fi
 
       - name: Create release
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" sotrep-live.user.js --clobber
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" sotrep-live.user.js --clobber
           else
-            gh release create "$GITHUB_REF_NAME" sotrep-live.user.js \
-              --title "$GITHUB_REF_NAME" \
+            gh release create "$TAG" sotrep-live.user.js \
+              --target "$GITHUB_SHA" \
+              --title "$TAG" \
               --generate-notes \
               --latest
           fi
