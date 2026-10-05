@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      1.0.1
+// @version      1.0.2
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js
@@ -65,16 +65,23 @@
   };
   // older versions stored a single threshold; carry it over once
   if (state.alerts.threshold) { state.alerts.moderate = state.alerts.threshold === 'moderate'; delete state.alerts.threshold; }
-  const save = () => {
-    GM_setValue('seen', state.seen);
-    GM_setValue('cache', state.cache);
-    GM_setValue('baselined', state.baselined);
-    GM_setValue('baselineAt', state.baselineAt);
-    GM_setValue('me', state.me);
-    GM_setValue('inList', state.inList);
-    GM_setValue('missing', state.missing);
-    GM_setValue('alerts', state.alerts);
-  };
+  // Writes only the keys named, or everything. seen and cache grow with every player met, so the 20 s poll and
+  // each lookup write just what they touched rather than re-serialising the lot.
+  const save = (keys = Object.keys(state)) => { for (const k of keys) GM_setValue(k, state[k]); };
+  // A sotrep reply older than 30 days is cut down to what History needs (colour and label). Socials, tags and alts
+  // go, so storage stops growing with every player ever met. Anyone met again is past the 24 h cache and looked up fresh.
+  {
+    const cutoff = Date.now() - 30 * 864e5;
+    const KEEP = ['severe_count', 'moderate_count', 'light_count', 'banned_xuids', 'reputation_override', 'profile_id', 'error'];
+    let trimmed = false;
+    for (const c of Object.values(state.cache)) {
+      if (!c || !c.rep || c.trimmed || !(c.at < cutoff)) continue;
+      c.rep = Object.fromEntries(KEEP.filter(k => k in c.rep).map(k => [k, c.rep[k]]));
+      c.trimmed = true;
+      trimmed = true;
+    }
+    if (trimmed) save(['cache']);
+  }
 
   // in-memory
   const session = {
@@ -343,7 +350,7 @@
     const rep = await sotrepSearchAs(gt, 'xbox');
     if (rep.error || !rep.xuid) return null;
     state.me = { gt, xuid: String(rep.xuid) };
-    save();
+    save(['me']);
     return state.me;
   }
   async function checkMe() {
@@ -352,7 +359,9 @@
     try {
       const me = await resolveMe();
       const paused = session.pauseUntil && Date.now() < session.pauseUntil;
-      showMe(me && !paused ? await sotrepGet(`/api/player/${encodeURIComponent(me.xuid)}/xbl-info`) : null);
+      const x = me && !paused ? await sotrepGet(`/api/player/${encodeURIComponent(me.xuid)}/xbl-info`) : null;
+      meOfflineChecks = saysOffline(x) ? meOfflineChecks + 1 : 0;
+      showMe(x);
     } catch (e) {
       showMe(null);
     } finally {
@@ -361,16 +370,30 @@
   }
   // back on the tab after a long gap: refresh straight away rather than waiting out the hidden-tab timer
   document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - meLastCheck > ME_VISIBLE_MS) checkMe(); });
+  // sotrep sees your presence as a stranger would, and a few minutes late: just after you come online, or with Xbox
+  // privacy set so only friends can see you, it says "offline" or nothing while you play. So it must say offline on
+  // two checks in a row before we warn, which rides out the start-up lag, and no status at all is not a warning.
+  const OFFLINE_CHECKS_TO_WARN = 2;
+  let meOfflineChecks = 0;
+  const saysOffline = (x) => !!x && !x.is_playing && /offline|last seen/i.test(String(x.presence_text || ''));
   function showMe(x) {
     if (!meEl) return;
     if (!x) { meEl.style.display = 'none'; return; }
     const txt = String(x.presence_text || '').trim();
+    const said = txt ? `Xbox Live told sotrep.com: "${txt}".` : 'Xbox Live gave sotrep.com no status for you.';
+    const privacy = 'Xbox can take a few minutes to notice you have come online. If it never does while you play, your Xbox privacy setting is probably hiding your status from people who are not your friends (Xbox app, Settings, Privacy, "Others can see if you\'re online"). That only affects this pill.';
     let cls, label, tip;
     if (x.is_playing) {
       cls = 'ok'; label = 'Xbox: playing SoT'; tip = txt || 'Xbox Live sees you in Sea of Thieves.';
-    } else if (!txt || /offline|last seen/i.test(txt)) {
+    } else if (!txt) {
+      cls = ''; label = 'Xbox status hidden';
+      tip = `${said} ${privacy} If you are set to appear offline, Rare's Recently Met list stops updating and this board will not see new players.`;
+    } else if (saysOffline(x) && meOfflineChecks < OFFLINE_CHECKS_TO_WARN) {
+      cls = ''; label = 'Xbox: not seen yet';
+      tip = `${said} ${privacy} If it still says offline at the next check, this turns into a warning.`;
+    } else if (saysOffline(x)) {
       cls = 'warn'; label = 'Xbox shows you offline';
-      tip = 'Xbox Live is reporting you as offline. If you are sailing while set to appear offline, Rare\'s Recently Met list does not update and this board will not see new players. Set yourself to online in the Xbox app.';
+      tip = `${said} If you are sailing while set to appear offline, Rare's Recently Met list does not update and this board will not see new players. Set yourself to online in the Xbox app. ${privacy}`;
     } else {
       cls = ''; label = 'Xbox: ' + (txt.length > 28 ? txt.slice(0, 28) + '…' : txt); tip = txt;
     }
@@ -537,19 +560,19 @@
     const field = (label, control, hint) => h('div', { class: 'fld' }, h('div', { class: 'fld-l' }, label), control, hint ? h('div', { class: 'fld-h' }, hint) : null);
     const check = (key, text) => {
       const c = h('input', { type: 'checkbox' }); c.checked = !!a[key];
-      c.addEventListener('change', () => { a[key] = c.checked; save(); if (key === 'sound' && c.checked) ensureAudio(); });
+      c.addEventListener('change', () => { a[key] = c.checked; save(['alerts']); if (key === 'sound' && c.checked) ensureAudio(); });
       return h('label', { class: 'chk' }, c, text);
     };
     // masked like a password: a webhook URL is a posting credential for that channel
     const webhook = h('input', { type: 'password', placeholder: 'https://discord.com/api/webhooks/…', spellcheck: 'false', autocomplete: 'off' });
     webhook.value = a.discord || '';
-    webhook.addEventListener('change', () => { a.discord = webhook.value.trim(); save(); });
+    webhook.addEventListener('change', () => { a.discord = webhook.value.trim(); save(['alerts']); });
     const showBtn = h('button', { class: 'btn quiet' }, 'Show');
     showBtn.addEventListener('click', () => { const hidden = webhook.type === 'password'; webhook.type = hidden ? 'text' : 'password'; showBtn.textContent = hidden ? 'Hide' : 'Show'; });
     const discordMsg = h('span', { class: 'fld-h', style: 'grid-column:auto' });
     const discordTest = h('button', { class: 'btn quiet' }, 'Test Discord');
     discordTest.addEventListener('click', async () => {
-      a.discord = webhook.value.trim(); save();
+      a.discord = webhook.value.trim(); save(['alerts']);
       if (!a.discord) { discordMsg.textContent = 'No webhook URL'; return; }
       discordMsg.textContent = 'Sending…';
       const r = await postDiscord('TestPirate', { severe_count: 1, banned_xuids: ['test'], manual_tags: [{ tooltip: 'Test alert' }] }, 'severe', SOTREP);
@@ -558,11 +581,14 @@
     const diagMsg = h('span', { class: 'fld-h', style: 'grid-column:auto' });
     const diagBtn = h('button', { class: 'btn quiet' }, 'Test sotrep');
     diagBtn.addEventListener('click', async () => {
+      // looks up whoever is signed in on this browser, so no gamertag is written into the script
+      const own = myGamertag();
+      if (!own) { diagMsg.textContent = 'Could not read your gamertag from this page. Reload while signed in to seaofthieves.com.'; return; }
       diagMsg.textContent = 'Asking sotrep.com…';
       const t0 = Date.now();
-      const r = await sotrepSearchAs('BigMephobia', 'xbox');
+      const r = await sotrepSearchAs(own, 'xbox');
       const ms = Date.now() - t0;
-      diagMsg.textContent = r.error ? `${ms} ms: ${r.error}` : `${ms} ms: ok, signed in${r.gamertag ? ' (found ' + r.gamertag + ')' : ''}`;
+      diagMsg.textContent = r.error ? `${ms} ms: ${r.error}` : `${ms} ms: ok, signed in and sotrep.com answered`;
     });
     const soundTest = h('button', { class: 'btn quiet' }, 'Test sound');
     soundTest.addEventListener('click', () => playChime('severe'));
@@ -608,7 +634,7 @@
       field('Discord', h('div', { class: 'row-ctl wide' }, webhook, showBtn, discordTest, discordMsg), 'Paste a webhook URL for a private channel. Flagged players get posted there with the rep and a profile link.'),
       field('Desktop', h('div', { class: 'row-ctl' }, check('desktop', 'Windows notification'), desktopBtn), 'Hidden behind a full-screen game; useful on a second screen only.'),
       h('div', { class: 'row-ctl' }, testAll, testMsg),
-      field('Connection', h('div', { class: 'row-ctl' }, diagBtn, diagMsg), 'One lookup against sotrep.com with the result and timing, for when rows sit on "queued" or show refusals.'),
+      field('Connection', h('div', { class: 'row-ctl' }, diagBtn, diagMsg), 'One lookup of your own gamertag against sotrep.com with the result and timing, for when rows sit on "queued" or show refusals.'),
     );
     return panelEl;
   }
@@ -723,27 +749,38 @@
     for (const gt of session.order) listEl.append(renderRow(gt, false));
   }
 
+  // A folded group of rows, drawn only while open. The poll re-renders, so each fold remembers its own state.
+  function fold(key, title, entries, sortByName) {
+    session.folds = session.folds || {};
+    const open = !!session.folds[key];
+    const head = h('div', { class: 'section fold' }, title, h('span', {}, entries.length), h('span', { class: 'hint' }, open ? 'hide' : 'show'));
+    head.addEventListener('click', () => { session.folds[key] = !open; render(); });
+    listEl.append(head);
+    if (!open) return;
+    const body = h('div', { class: 'grid' });
+    const rows = sortByName ? [...entries].sort((a, b) => a[0].localeCompare(b[0])) : entries;
+    for (const [gt] of rows) body.append(renderRow(gt, true));
+    listEl.append(body);
+  }
+
+  const HISTORY_OPEN_DAYS = 30;   // older encounters sit in a fold so History stays quick to draw
   function renderHistory() {
     const base = baselineStamp();
     const all = Object.entries(state.seen).sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]));
+    const cutoff = Date.now() - HISTORY_OPEN_DAYS * 864e5;
     const tracked = all.filter(([, iso]) => iso !== base);
+    const recent = tracked.filter(([, iso]) => Date.parse(iso) >= cutoff);
+    const older = tracked.filter(([, iso]) => !(Date.parse(iso) >= cutoff));
     const baseline = all.filter(([, iso]) => iso === base);
     if (!tracked.length && !baseline.length) { listEl.append(h('div', { class: 'empty' }, 'Nothing recorded yet.')); return; }
     let lastDay = null;
-    for (const [gt, iso] of tracked) {
+    for (const [gt, iso] of recent) {
       const day = dayLabel(new Date(iso));
       if (day !== lastDay) { listEl.append(h('div', { class: 'section' }, day)); lastDay = day; }
       listEl.append(renderRow(gt, true));
     }
-    if (baseline.length) {
-      const body = h('div', { class: 'grid' });
-      const fill = () => { body.replaceChildren(); for (const [gt] of baseline.sort((a, b) => a[0].localeCompare(b[0]))) body.append(renderRow(gt, true)); };
-      const apply = () => { body.style.display = session.foldOpen ? '' : 'none'; head.querySelector('.hint').textContent = session.foldOpen ? 'hide' : 'show'; if (session.foldOpen) fill(); };
-      const head = h('div', { class: 'section fold' }, `Met before tracking started`, h('span', {}, baseline.length), h('span', { class: 'hint' }, 'show'));
-      head.addEventListener('click', () => { session.foldOpen = !session.foldOpen; apply(); });
-      listEl.append(head, body);
-      apply();   // the 20 s poll re-renders, so keep whatever state the fold was in
-    }
+    if (older.length) fold('older', `Older than ${HISTORY_OPEN_DAYS} days`, older, false);
+    if (baseline.length) fold('baseline', 'Met before tracking started', baseline, true);
   }
 
   function renderRow(gt, withLookupBtn) {
@@ -772,7 +809,8 @@
           const label = s.username || s.platform;
           const p = String(s.platform).toLowerCase();
           const badge = h('span', { class: 'pbadge ' + p, title: s.platform }, PLATFORM_LETTER[p] || p.charAt(0).toUpperCase());
-          socials.push(s.link
+          // links come from other players' sotrep profiles: only plain https, never javascript: or similar
+          socials.push(/^https:\/\//i.test(String(s.link || ''))
             ? h('a', { class: 'soc', href: s.link, target: '_blank', rel: 'noopener', title: s.platform }, badge, label)
             : h('span', { class: 'soc', title: s.platform }, badge, label));
         });
@@ -798,7 +836,7 @@
             h('a', { class: 'name', href: link, target: '_blank', rel: 'noopener' }, gt),
             h('span', { class: 'rep' }, repText),
             needsLookup ? h('button', { class: 'mini', onclick: () => { session.manual.add(gt); enqueue(gt, true); render(); } }, 'Look up') : null,
-            rep && rep.error ? h('button', { class: 'mini', onclick: () => { delete state.cache[gt]; save(); enqueue(gt, true); render(); } }, 'Retry') : null,
+            rep && rep.error ? h('button', { class: 'mini', onclick: () => { delete state.cache[gt]; save(['cache']); enqueue(gt, true); render(); } }, 'Retry') : null,
           ),
           (tags.length || socials.length) ? h('div', { class: 'meta' }, tags, socials.length ? h('span', { class: 'social' }, socials) : null) : null,
         ),
@@ -872,6 +910,7 @@
       const fresh = [];
       const MISSING_POLLS = 2;   // a name must be gone this many polls before its return counts as meeting them again
       const present = {};
+      let changed = false;
       for (const p of list) {
         if (!p || !p.Gamertag) continue;
         const gt = p.Gamertag;
@@ -880,21 +919,29 @@
         if (!state.seen[gt]) {
           // never seen: a new encounter
           state.seen[gt] = now;
+          changed = true;
           if (state.baselined) fresh.push(gt);
         } else if (state.inList && !state.inList[gt] && (state.missing[gt] | 0) >= MISSING_POLLS) {
           // seen before, dropped off Rare's rolling list, now back: you met them again
+          // the 24 h cache still applies, so a quick return costs no new lookup
           state.seen[gt] = now;
-          const c = state.cache[gt];
-          if (c && Date.now() - c.at > 3600e3) delete state.cache[gt];   // only re-ask sotrep if the answer is over an hour old
           fresh.push(gt);
         }
-        delete state.missing[gt];
+        if (gt in state.missing) { delete state.missing[gt]; changed = true; }
       }
-      // count how long each previously-listed name has been absent
-      if (state.inList) for (const gt of Object.keys(state.inList)) if (!present[gt]) state.missing[gt] = (state.missing[gt] | 0) + 1;
+      // count how long each name has been absent: everyone listed last time plus everyone already counting.
+      // Capped at MISSING_POLLS, which is all the re-meet check needs, so a long-gone name stops changing.
+      if (state.inList) {
+        for (const gt of new Set([...Object.keys(state.inList), ...Object.keys(state.missing)])) {
+          if (present[gt] || (state.missing[gt] | 0) >= MISSING_POLLS) continue;
+          state.missing[gt] = (state.missing[gt] | 0) + 1;
+          changed = true;
+        }
+        if (Object.keys(state.inList).length !== Object.keys(present).length || Object.keys(present).some(gt => !state.inList[gt])) changed = true;
+      } else changed = true;
       state.inList = present;
       if (!state.baselined) { state.baselined = true; state.baselineAt = now; }
-      save();
+      if (changed || fresh.length) save(['seen', 'inList', 'missing', 'baselined', 'baselineAt']);
       for (const gt of fresh) {
         session.order = [gt, ...session.order.filter(x => x !== gt)];   // to the top, even if already on the board
         session.manual.delete(gt);                                        // the game found them this time, so alerts apply
@@ -912,7 +959,9 @@
       if (fresh.length) lastChangeAt = Date.now();
       session.lastPoll = new Date();
       setStatus(statusLine());
-      render();
+      // redraw only when the list or someone's presence changed; the 20 s poll is otherwise a no-op on screen
+      const sig = list.map(p => p && `${p.Gamertag}|${p.IsOnline ? 1 : 0}${p.IsPlayingSot ? 1 : 0}|${p.DisplayPicUrl || ''}`).join('\n');
+      if (sig !== session.listSig || fresh.length) { session.listSig = sig; render(); }
     } catch (e) {
       setStatus('Problem: ' + (e.message || String(e)), true);
       if (e && e.backoff) delay = e.backoff * 1000;
@@ -1020,7 +1069,7 @@
       const prev = state.cache[gt];
       const rechecks = prev && prev.rep && prev.rep.enriching ? (prev.rechecks | 0) + 1 : 0;
       state.cache[gt] = { at: Date.now(), rep, rechecks, picRetried: !!(prev && prev.picRetried) };
-      save();
+      save(['seen', 'cache']);
       render();
       if (rep.enriching && !rep.error && rechecks < MAX_RECHECKS) {
         // SOTREP is still resolving this player in the background; go back for the rest shortly.
@@ -1048,13 +1097,13 @@
     if (!session.order.includes(gt)) session.order.unshift(gt);
     if (!state.seen[gt]) state.seen[gt] = new Date().toISOString();
     delete state.cache[gt];   // you asked by hand, so always fetch fresh
-    save();
+    save(['seen', 'cache']);
     enqueue(gt);
     render();
   }
   function clearSession() { session.order = []; session.queue = []; render(); setStatus(statusLine()); }
   function resetAll() {
-    state.seen = {}; state.cache = {}; state.baselined = false; state.baselineAt = null; save();
+    state.seen = {}; state.cache = {}; state.baselined = false; state.baselineAt = null; state.inList = null; state.missing = {}; save();
     session.order = []; session.queue = [];
     poll();
   }
