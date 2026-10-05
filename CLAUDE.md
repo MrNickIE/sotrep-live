@@ -33,3 +33,7 @@ To ship version X.Y.Z:
 6. Confirm the run is green and the release has the asset, then merge the branch into `main`. This puts the new meta file live.
 
 Order matters: the release must exist before the new meta file goes live on `main`, otherwise Tampermonkey sees a new version but downloads the old asset. Releasing from the branch before merging guarantees that. If a check fails, no release is made; fix it on the branch and run the workflow again.
+
+## README screenshots
+
+`images/*.png` are made by `tools/screenshots.js` (run `NODE_PATH=$(npm root -g) node tools/screenshots.js` from the repo root; needs Playwright). It loads the real script against made-up players with every outbound request answered locally, and blurs names, socials and pictures. Re-run it after visible UI changes. Never use invented gamertags that could belong to real players without the blur, and never put real players in the README.

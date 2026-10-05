@@ -16,6 +16,10 @@ It turns `https://www.seaofthieves.com/friends` into a second-screen board. Whil
 
 Independent personal tool. Not affiliated with, or endorsed by, SoT Rep, Rare or Microsoft. It uses no special access: everything it does, you could do by hand in two browser tabs.
 
+![The Recent board: players you just met, colour-coded by reputation, with a live streamer and their Xbox status](images/board.png)
+
+<sub>Screenshots use made-up players with names blurred.</sub>
+
 ## How it works
 
 - It reads the same `Recently Met` data the seaofthieves.com friends page shows, using your normal seaofthieves.com login: every 20 seconds while you are meeting people, once a minute after ten quiet minutes, every three minutes when the tab is hidden and nothing has changed for half an hour. It backs off for several minutes if the site asks it to.
@@ -51,6 +55,10 @@ Whatever the browser, allow the one-time requests Tampermonkey shows for sotrep.
 - **Clear** empties the Recent board. **Reset** (press twice) forgets everything and re-baselines.
 
 Left edge and reputation text: green clean, yellow light flags, orange moderate, red severe or banned accounts.
+
+![History: everyone you have met, grouped by day](images/history.png)
+
+![Alert settings: red, orange and streamer alerts by chime, Discord or desktop notification](images/alerts.png)
 
 ## Limits
 
