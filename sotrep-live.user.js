@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      1.0.1
+// @version      1.0.2
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js
@@ -352,7 +352,9 @@
     try {
       const me = await resolveMe();
       const paused = session.pauseUntil && Date.now() < session.pauseUntil;
-      showMe(me && !paused ? await sotrepGet(`/api/player/${encodeURIComponent(me.xuid)}/xbl-info`) : null);
+      const x = me && !paused ? await sotrepGet(`/api/player/${encodeURIComponent(me.xuid)}/xbl-info`) : null;
+      meOfflineChecks = saysOffline(x) ? meOfflineChecks + 1 : 0;
+      showMe(x);
     } catch (e) {
       showMe(null);
     } finally {
@@ -361,16 +363,30 @@
   }
   // back on the tab after a long gap: refresh straight away rather than waiting out the hidden-tab timer
   document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - meLastCheck > ME_VISIBLE_MS) checkMe(); });
+  // sotrep sees your presence as a stranger would, and a few minutes late: just after you come online, or with Xbox
+  // privacy set so only friends can see you, it says "offline" or nothing while you play. So it must say offline on
+  // two checks in a row before we warn, which rides out the start-up lag, and no status at all is not a warning.
+  const OFFLINE_CHECKS_TO_WARN = 2;
+  let meOfflineChecks = 0;
+  const saysOffline = (x) => !!x && !x.is_playing && /offline|last seen/i.test(String(x.presence_text || ''));
   function showMe(x) {
     if (!meEl) return;
     if (!x) { meEl.style.display = 'none'; return; }
     const txt = String(x.presence_text || '').trim();
+    const said = txt ? `Xbox Live told sotrep.com: "${txt}".` : 'Xbox Live gave sotrep.com no status for you.';
+    const privacy = 'Xbox can take a few minutes to notice you have come online. If it never does while you play, your Xbox privacy setting is probably hiding your status from people who are not your friends (Xbox app, Settings, Privacy, "Others can see if you\'re online"). That only affects this pill.';
     let cls, label, tip;
     if (x.is_playing) {
       cls = 'ok'; label = 'Xbox: playing SoT'; tip = txt || 'Xbox Live sees you in Sea of Thieves.';
-    } else if (!txt || /offline|last seen/i.test(txt)) {
+    } else if (!txt) {
+      cls = ''; label = 'Xbox status hidden';
+      tip = `${said} ${privacy} If you are set to appear offline, Rare's Recently Met list stops updating and this board will not see new players.`;
+    } else if (saysOffline(x) && meOfflineChecks < OFFLINE_CHECKS_TO_WARN) {
+      cls = ''; label = 'Xbox: not seen yet';
+      tip = `${said} ${privacy} If it still says offline at the next check, this turns into a warning.`;
+    } else if (saysOffline(x)) {
       cls = 'warn'; label = 'Xbox shows you offline';
-      tip = 'Xbox Live is reporting you as offline. If you are sailing while set to appear offline, Rare\'s Recently Met list does not update and this board will not see new players. Set yourself to online in the Xbox app.';
+      tip = `${said} If you are sailing while set to appear offline, Rare's Recently Met list does not update and this board will not see new players. Set yourself to online in the Xbox app. ${privacy}`;
     } else {
       cls = ''; label = 'Xbox: ' + (txt.length > 28 ? txt.slice(0, 28) + '…' : txt); tip = txt;
     }
