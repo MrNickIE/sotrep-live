@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      0.9.5
+// @version      0.9.7
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js
@@ -55,6 +55,7 @@
     cache: GM_getValue('cache', {}),      // gamertag -> { at, rep }
     baselined: GM_getValue('baselined', false),
     baselineAt: GM_getValue('baselineAt', null),   // ISO stamp shared by every name in the first poll
+    me: GM_getValue('me', null),                   // { gt, xuid } for the signed-in player, so the Xbox ID lookup happens once
     inList: GM_getValue('inList', null),           // gamertag -> true for everyone present at the last poll (null until first poll)
     missing: GM_getValue('missing', {}),           // gamertag -> consecutive polls absent from the list
     alerts: Object.assign(
@@ -69,6 +70,7 @@
     GM_setValue('cache', state.cache);
     GM_setValue('baselined', state.baselined);
     GM_setValue('baselineAt', state.baselineAt);
+    GM_setValue('me', state.me);
     GM_setValue('inList', state.inList);
     GM_setValue('missing', state.missing);
     GM_setValue('alerts', state.alerts);
@@ -120,6 +122,9 @@
     .status{color:#8a93a0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1 1 200px}
     .status .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#2f9e63;margin-right:6px;vertical-align:middle}
     .status .dot.err{background:#d6453d}
+    .me{font-size:11.5px;line-height:20px;padding:0 8px;border-radius:999px;border:1px solid #2a3340;color:#8a93a0;white-space:nowrap;cursor:help}
+    .me.ok{color:#4fb57f;border-color:#1f5a3a;background:#143426}
+    .me.warn{color:#e6b85c;border-color:#6b4a1a;background:#3a2d12}
     .search{display:flex;align-items:center;background:#0e1114;border:1px solid #2a3340;border-radius:6px;height:30px;overflow:hidden;flex:1 1 160px;max-width:420px}
     .search input{all:unset;flex:1;min-width:0;height:30px;padding:0 10px;color:#e6e4dd;font:12.5px ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
     .search input::placeholder{color:#5e6875}
@@ -299,6 +304,73 @@
       latest && installedFromLink ? h('span', {}, ' (or Tampermonkey menu, Check for userscript updates)') : h('span', {}, ', then delete this copy in Tampermonkey.'),
     );
     bannerEl.style.display = '';
+  }
+
+  // ---------- your own Xbox presence ----------
+  // Rare's Recently Met list stops growing while you appear offline on Xbox, so show how Xbox sees you.
+  // Who you are comes from Rare's own page ("r-gtg"), your Xbox ID from one cached sotrep search, and your
+  // presence from sotrep's small xbl-info reply. All with your own logins; nothing is sent anywhere else.
+  const ME_VISIBLE_MS = 5 * 60e3, ME_HIDDEN_MS = 15 * 60e3;
+  let meEl = null, meTimer = null, meLastCheck = 0;
+  function myGamertag() {
+    for (const s of document.querySelectorAll('script:not([src])')) {
+      const m = s.textContent.match(/"r-gtg"\s*:\s*"([^"]+)"/);
+      if (m) return m[1];
+    }
+    return null;
+  }
+  function sotrepGet(path) {
+    return new Promise((resolve) => {
+      GM_xmlhttpRequest({
+        method: 'GET', url: SOTREP + path, headers: { Accept: 'application/json' }, timeout: 15000,
+        onload: (r) => { if (r.status !== 200) return resolve(null); try { resolve(JSON.parse(r.responseText)); } catch (e) { resolve(null); } },
+        onerror: () => resolve(null), ontimeout: () => resolve(null),
+      });
+    });
+  }
+  async function resolveMe() {
+    const gt = myGamertag();
+    if (!gt) return null;
+    if (state.me && state.me.gt === gt && state.me.xuid) return state.me;
+    if (session.pauseUntil && Date.now() < session.pauseUntil) return null;   // sotrep asked us to wait
+    const rep = await sotrepSearchAs(gt, 'xbox');
+    if (rep.error || !rep.xuid) return null;
+    state.me = { gt, xuid: String(rep.xuid) };
+    save();
+    return state.me;
+  }
+  async function checkMe() {
+    clearTimeout(meTimer);
+    meLastCheck = Date.now();
+    try {
+      const me = await resolveMe();
+      const paused = session.pauseUntil && Date.now() < session.pauseUntil;
+      showMe(me && !paused ? await sotrepGet(`/api/player/${encodeURIComponent(me.xuid)}/xbl-info`) : null);
+    } catch (e) {
+      showMe(null);
+    } finally {
+      meTimer = setTimeout(checkMe, document.hidden ? ME_HIDDEN_MS : ME_VISIBLE_MS);
+    }
+  }
+  // back on the tab after a long gap: refresh straight away rather than waiting out the hidden-tab timer
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - meLastCheck > ME_VISIBLE_MS) checkMe(); });
+  function showMe(x) {
+    if (!meEl) return;
+    if (!x) { meEl.style.display = 'none'; return; }
+    const txt = String(x.presence_text || '').trim();
+    let cls, label, tip;
+    if (x.is_playing) {
+      cls = 'ok'; label = 'Xbox: playing SoT'; tip = txt || 'Xbox Live sees you in Sea of Thieves.';
+    } else if (!txt || /offline|last seen/i.test(txt)) {
+      cls = 'warn'; label = 'Xbox shows you offline';
+      tip = 'Xbox Live is reporting you as offline. If you are sailing while set to appear offline, Rare\'s Recently Met list does not update and this board will not see new players. Set yourself to online in the Xbox app.';
+    } else {
+      cls = ''; label = 'Xbox: ' + (txt.length > 28 ? txt.slice(0, 28) + '…' : txt); tip = txt;
+    }
+    meEl.className = 'me ' + cls;
+    meEl.textContent = label;
+    meEl.title = tip + (x.last_played_text ? `  Last played SoT ${x.last_played_text}.` : '');
+    meEl.style.display = '';
   }
 
   // ---------- alerts ----------
@@ -560,6 +632,7 @@
       h('div', { class: 'brand' }, 'SOTREP ', h('b', {}, 'Live'), versionEl),
       h('div', { class: 'tabs' }, tabRecent, tabHistory),
       statusEl,
+      (meEl = h('span', { class: 'me', style: 'display:none' })),
       h('div', { class: 'controls' },
         h('div', { class: 'search' }, nameBox, h('button', { onclick: checkName }, 'Check')),
         alertsBtn,
@@ -732,7 +805,17 @@
 
   // ---------- data: Recently Met ----------
   async function fetchRecent() {
-    const r = await fetch(RECENT_URL, { headers: { Accept: 'application/json' } });
+    // A hung request would stop the self-scheduling poll loop for good, so give it a hard 20 s limit.
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 20000);
+    let r;
+    try {
+      r = await fetch(RECENT_URL, { headers: { Accept: 'application/json' }, signal: ctrl.signal });
+    } catch (e) {
+      throw Object.assign(new Error(e && e.name === 'AbortError' ? 'seaofthieves.com did not answer, retrying in a minute' : 'could not reach seaofthieves.com, retrying in a minute'), { backoff: 60 });
+    } finally {
+      clearTimeout(t);
+    }
     if (r.status === 401 || r.status === 403) throw Object.assign(new Error('Not logged in to seaofthieves.com (reload and sign in)'), { backoff: 300 });
     if (r.status === 429) throw Object.assign(new Error('seaofthieves.com asked us to slow down, waiting 5 minutes'), { backoff: 300 });
     if (r.status >= 500) throw Object.assign(new Error(`seaofthieves.com error ${r.status}, waiting 2 minutes`), { backoff: 120 });
@@ -763,7 +846,16 @@
   // coming back to the tab after a quiet spell: poll straight away rather than waiting out a long idle timer
   document.addEventListener('visibilitychange', () => { if (!document.hidden && session.lastPoll && Date.now() - session.lastPoll > POLL_FAST_MS) schedulePoll(500); });
 
+  // Watchdog: if no poll has started for well over the longest planned gap, the loop has stalled; restart it.
+  let pollInFlight = false, lastPollStart = 0;
+  setInterval(() => {
+    if (!pollInFlight && lastPollStart && Date.now() - lastPollStart > POLL_IDLE_MS + 60000) schedulePoll(0);
+  }, 60000);
+
   async function poll() {
+    if (pollInFlight) return;
+    pollInFlight = true;
+    lastPollStart = Date.now();
     let delay = null;
     try {
       const list = await fetchRecent();
@@ -818,6 +910,7 @@
       setStatus('Problem: ' + (e.message || String(e)), true);
       if (e && e.backoff) delay = e.backoff * 1000;
     }
+    pollInFlight = false;
     schedulePoll(delay || nextPollDelay());
   }
 
@@ -962,6 +1055,7 @@
   // ---------- go ----------
   buildUI();
   poll();   // schedules itself afterwards at the adaptive interval
+  setTimeout(checkMe, 4000);   // after the first poll, so the first sotrep requests are not bunched together
   checkForUpdate();
   setInterval(checkForUpdate, 6 * 3600e3);
 })();
