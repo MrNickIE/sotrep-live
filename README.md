@@ -47,7 +47,7 @@ Whatever the browser, allow the one-time requests Tampermonkey shows for sotrep.
 ## Using it
 
 - **Recent** shows players first seen in the last 20 minutes (survives a refresh).
-- **History** shows everyone ever recorded, newest first, with a **Look up** button on anyone not yet checked. Names from the baseline sit in a collapsed group at the bottom.
+- **History** shows everyone met in the last 30 days, newest first, with a **Look up** button on anyone not yet checked. Older encounters and names from the baseline sit in collapsed groups at the bottom. After 30 days a player's stored rep is cut down to their colour and summary, which keeps the script light; meet them again and they are looked up afresh.
 - **Check a gamertag** looks up any name you type, for players you spot in game before Rare registers them. A Twitch channel name works too: if no pirate has that gamertag, sotrep is asked for the pirate linked to that Twitch account.
 - Alerts fire only for players the game registered on its own. Manual lookups (the Check box, History's Look up buttons) never alert.
 - **Alerts** opens the alert settings. Tick what you want to be told about: red (severe flags or banned accounts), orange (moderate flags), purple (a linked streamer who is live), in any mix. A chime plays in the tab by default. Paste a Discord webhook URL to have flagged players posted to a private channel with the rep summary and a profile link, which is the reliable route while a game has the screen. A Windows desktop notification is also available but is hidden behind a full-screen game. **Test alerts** fires every enabled channel once.

@@ -1,13 +1,14 @@
 # Working on SOTREP Live
 
-Single-file Tampermonkey userscript (`sotrep-live.user.js`) that turns the seaofthieves.com friends page into a live board of players you meet, with their SoT Rep reputation. Owner: Nick (MrNickIE). He directs, Claude builds.
+Single-file Tampermonkey userscript (`sotrep-live.user.js`) that turns the seaofthieves.com friends page into a live board of players you meet, with their SoT Rep reputation. The owner directs, Claude builds.
 
 ## Rules that always apply
 
-- **Not affiliated.** Nick is not part of the SoT Rep team. Nothing in the README, release notes or UI may imply the tool is affiliated with or endorsed by SoT Rep, Rare or Microsoft.
+- **Keep the owner anonymous.** Never put the owner's name or gamertag in code, comments, README, commit messages, PR text or release notes. Anything that needs a gamertag (tests, diagnostics) reads the signed-in player from the page at run time or uses obvious placeholders. The GitHub handle in repo URLs is unavoidable; nothing beyond that.
+- **Not affiliated.** The owner is not part of the SoT Rep team. Nothing in the README, release notes or UI may imply the tool is affiliated with or endorsed by SoT Rep, Rare or Microsoft.
 - **Never risk a ban or block.** Every outbound request needs a reason, a frequency and a back-off. Current budget:
   - seaofthieves.com `get-recent-friends`: adaptive polling (20 s while the list changes, 60 s after 10 quiet minutes, 180 s when hidden and quiet 30 min), 20 s timeout, back-off on 401/403/429/5xx, watchdog restarts a stalled loop.
-  - sotrep.com: one lookup per new name, 3 s apart, cached 24 h, Retry-After honoured, errored rows never auto-retried. No bulk lookup, ever (Nick's decision). Own presence via `xbl-info` every 5 min visible, 15 min hidden.
+  - sotrep.com: one lookup per new name, 3 s apart, cached 24 h (a player met again reuses it), Retry-After honoured, errored rows never auto-retried. No bulk lookup, ever (the owner's decision). Own presence via `xbl-info` every 5 min visible, 15 min hidden.
   - twitch.tv: one channel page per live-checked streamer every 5 min, only for the Recent board.
   - GitHub: meta file check every 6 h.
 - **Writing:** UK English. No em dashes or en dashes anywhere (code comments, README, commits, release notes). Plain short commit messages that do not read as AI. Never add a Co-Authored-By trailer or a Claude session link to commits or PRs.
@@ -18,7 +19,7 @@ Single-file Tampermonkey userscript (`sotrep-live.user.js`) that turns the seaof
 
 Install link: `https://github.com/MrNickIE/sotrep-live/releases/latest/download/sotrep-live.user.js`
 
-- `@downloadURL` points at the latest release asset (GitHub counts these downloads, which is how Nick sees usage).
+- `@downloadURL` points at the latest release asset (GitHub counts these downloads, which is how the owner sees usage).
 - `@updateURL` points at `sotrep-live.meta.js` on `main` (header only, not counted). Tampermonkey checks it, then downloads the release asset when the version is newer.
 
 To ship version X.Y.Z:
