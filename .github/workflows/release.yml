@@ -23,6 +23,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Work out the tag
         run: |
@@ -62,6 +64,15 @@ jobs:
             exit 1
           fi
 
+      - name: Release notes
+        run: |
+          prev=$(git tag --list 'v*' --sort=-v:refname | grep -vx "$TAG" | head -1 || true)
+          range=${prev:+$prev..}HEAD
+          git log "$range" --no-merges --format='- %s' -- sotrep-live.user.js | grep -vE '^- (v?[0-9]+(\.[0-9]+)+|Add files via upload|Update [^ ]+\.(js|md))$' > notes.md || true
+          [ -s notes.md ] || echo '- Maintenance release' > notes.md
+          { echo; echo "Install or update: https://github.com/MrNickIE/sotrep-live/releases/latest/download/sotrep-live.user.js"; } >> notes.md
+          cat notes.md
+
       - name: Create release
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -70,6 +81,6 @@ jobs:
             gh release create "$TAG" sotrep-live.user.js \
               --target "$GITHUB_SHA" \
               --title "$TAG" \
-              --generate-notes \
+              --notes-file notes.md \
               --latest
           fi
