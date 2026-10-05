@@ -1,0 +1,62 @@
+# Builds a GitHub release when a v* tag is pushed, with sotrep-live.user.js attached.
+# Checks run first so a bad tag never produces a release.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      LC_ALL: C.UTF-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches @version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver=$(grep -m1 -oP '^// @version\s+\K\S+' sotrep-live.user.js)
+          echo "Tag $tag, script $ver"
+          if [ "$tag" != "$ver" ]; then
+            echo "::error::Tag v$tag does not match @version $ver in sotrep-live.user.js"
+            exit 1
+          fi
+
+      - name: Meta file matches script header
+        run: |
+          if ! diff <(sed -n '/==UserScript==/,/==\/UserScript==/p' sotrep-live.user.js) sotrep-live.meta.js; then
+            echo "::error::sotrep-live.meta.js is out of date. Regenerate it from the script header."
+            exit 1
+          fi
+
+      - name: Syntax check
+        run: node -e "new Function(require('fs').readFileSync('sotrep-live.user.js','utf8').replace(/GM_\w+/g,'undefined'))"
+
+      - name: No em or en dashes
+        run: |
+          n=$(cat sotrep-live.user.js README.md | grep -cP '\x{2014}|\x{2013}' || true)
+          if [ "$n" != "0" ]; then
+            grep -nP '\x{2014}|\x{2013}' sotrep-live.user.js README.md
+            echo "::error::Found $n line(s) with em or en dashes"
+            exit 1
+          fi
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" sotrep-live.user.js --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" sotrep-live.user.js \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes \
+              --latest
+          fi
