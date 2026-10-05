@@ -28,8 +28,8 @@ To ship version X.Y.Z:
 3. Run the checks locally (the Action runs them too):
    - Syntax: `node -e "new Function(require('fs').readFileSync('sotrep-live.user.js','utf8').replace(/GM_\w+/g,'undefined'))"`
    - Dashes: `LC_ALL=C.UTF-8 grep -cP '\x{2014}|\x{2013}' sotrep-live.user.js README.md` should print 0 for each file.
-4. Commit both files on `main` and tag: `git tag vX.Y.Z`.
-5. Push the tag first: `git push origin vX.Y.Z`. The Release Action (`.github/workflows/release.yml`) checks the tag matches `@version`, the meta file matches the header, the syntax and the dashes, then creates the release with `sotrep-live.user.js` attached.
-6. Once the Action is green and the release exists, push `main`: `git push origin main`. This puts the new meta file live.
+4. Commit both files on a branch and push the branch. Do not merge to `main` yet.
+5. Run the Release workflow (`.github/workflows/release.yml`) on that branch: the `run_workflow` GitHub tool with workflow `release.yml` and ref set to the branch, or the Run workflow button on the Actions tab. It reads `@version`, refuses if that release already exists, checks the meta file, syntax and dashes, then tags the commit `vX.Y.Z` and creates the release with `sotrep-live.user.js` attached. Claude Code sessions cannot push tags, so use this route rather than `git push origin vX.Y.Z` (which also works, from a normal machine).
+6. Confirm the run is green and the release has the asset, then merge the branch into `main`. This puts the new meta file live.
 
-Order matters: the release must exist before the new meta file goes live on `main`, otherwise Tampermonkey sees a new version but downloads the old asset. Pushing the tag first guarantees that. If a check fails, no release is made; fix it, move the tag (`git tag -f vX.Y.Z`, `git push -f origin vX.Y.Z`) and the Action runs again.
+Order matters: the release must exist before the new meta file goes live on `main`, otherwise Tampermonkey sees a new version but downloads the old asset. Releasing from the branch before merging guarantees that. If a check fails, no release is made; fix it on the branch and run the workflow again.
