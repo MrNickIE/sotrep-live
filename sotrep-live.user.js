@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      1.0.0
+// @version      1.0.1
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js
@@ -280,21 +280,25 @@
       },
     });
   }
-  // After the install link is clicked, Tampermonkey's dialog takes focus; when focus returns here the update has
-  // (probably) been applied, so reload to start running the new version. A cancelled dialog just reloads harmlessly.
-  let updateClickedAt = 0;
+  // After the install link is clicked, Tampermonkey's install page takes over (a new tab, or a popup window).
+  // Once we have actually lost it and then got it back, the update has (probably) been applied, so reload to start
+  // running the new version. No timer: a quick install and return must still reload. A cancelled dialog just
+  // reloads harmlessly.
+  let updateArmed = false, updateLeft = false;
   function armReloadOnReturn() {
-    updateClickedAt = Date.now();
+    updateArmed = true; updateLeft = false;
     setStatus('Update opened in a new tab. This board reloads itself when you come back.', false);
   }
+  const noteLeft = () => { if (updateArmed && (document.visibilityState === 'hidden' || !document.hasFocus())) updateLeft = true; };
   const maybeReload = () => {
-    if (updateClickedAt && Date.now() - updateClickedAt > 5000 && document.visibilityState === 'visible') {
-      updateClickedAt = 0;
+    if (updateArmed && updateLeft && document.visibilityState === 'visible') {
+      updateArmed = updateLeft = false;
       setTimeout(() => location.reload(), 800);
     }
   };
+  window.addEventListener('blur', noteLeft);
   window.addEventListener('focus', maybeReload);
-  document.addEventListener('visibilitychange', maybeReload);
+  document.addEventListener('visibilitychange', () => { noteLeft(); maybeReload(); });
 
   let bannerEl = null;
   function showUpdateBanner(latest, installedFromLink) {
