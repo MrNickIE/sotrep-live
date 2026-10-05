@@ -25,8 +25,11 @@ To ship version X.Y.Z:
 
 1. Bump `// @version` in `sotrep-live.user.js`.
 2. Regenerate the meta file: `sed -n '/==UserScript==/,/==\/UserScript==/p' sotrep-live.user.js > sotrep-live.meta.js`
-3. Syntax check: `node -e "new Function(require('fs').readFileSync('sotrep-live.user.js','utf8').replace(/GM_\w+/g,'undefined'))"`
-4. Check for dashes: `grep -cP '\x{2014}|\x{2013}' sotrep-live.user.js README.md` should print 0 for each file.
-5. Commit both files, tag `vX.Y.Z`, push, and create a GitHub release for the tag with `sotrep-live.user.js` attached as an asset. The release must exist before (or at the same moment as) the new meta file goes live, otherwise Tampermonkey sees a new version but downloads the old asset.
+3. Run the checks locally (the Action runs them too):
+   - Syntax: `node -e "new Function(require('fs').readFileSync('sotrep-live.user.js','utf8').replace(/GM_\w+/g,'undefined'))"`
+   - Dashes: `LC_ALL=C.UTF-8 grep -cP '\x{2014}|\x{2013}' sotrep-live.user.js README.md` should print 0 for each file.
+4. Commit both files on `main` and tag: `git tag vX.Y.Z`.
+5. Push the tag first: `git push origin vX.Y.Z`. The Release Action (`.github/workflows/release.yml`) checks the tag matches `@version`, the meta file matches the header, the syntax and the dashes, then creates the release with `sotrep-live.user.js` attached.
+6. Once the Action is green and the release exists, push `main`: `git push origin main`. This puts the new meta file live.
 
-First job for a Claude Code session: add a GitHub Action that builds the release automatically when a `v*` tag is pushed, attaching `sotrep-live.user.js`, so shipping is just "bump, commit, tag, push".
+Order matters: the release must exist before the new meta file goes live on `main`, otherwise Tampermonkey sees a new version but downloads the old asset. Pushing the tag first guarantees that. If a check fails, no release is made; fix it, move the tag (`git tag -f vX.Y.Z`, `git push -f origin vX.Y.Z`) and the Action runs again.
