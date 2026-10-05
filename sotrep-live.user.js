@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      0.9.7
+// @version      0.9.8
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
-// @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js
-// @downloadURL  https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js
+// @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js
+// @downloadURL  https://github.com/MrNickIE/sotrep-live/releases/latest/download/sotrep-live.user.js
 // @match        https://www.seaofthieves.com/friends*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
@@ -251,7 +251,10 @@
   // ---------- version check ----------
   // Compares this copy's @version with the one on GitHub. A pasted or stale copy gets a banner with the install link,
   // which is the nearest thing to blocking local copies. Checked on load and every 6 hours.
-  const RAW_URL = 'https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js';
+  // Version checks read the tiny header-only meta file (not counted); installs and updates go through the
+  // latest GitHub release, which GitHub counts, so release download numbers approximate active users.
+  const META_URL = 'https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js';
+  const RAW_URL = 'https://github.com/MrNickIE/sotrep-live/releases/latest/download/sotrep-live.user.js';
   const MY_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0';
   function cmpVersion(a, b) {
     const pa = String(a).split('.').map(n => parseInt(n, 10) || 0), pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
@@ -260,7 +263,7 @@
   }
   function checkForUpdate() {
     GM_xmlhttpRequest({
-      method: 'GET', url: RAW_URL + '?t=' + Date.now(), timeout: 15000,
+      method: 'GET', url: META_URL + '?t=' + Date.now(), timeout: 15000,
       onload: (r) => {
         const m = (r.responseText || '').match(/@version\s+(\S+)/);
         if (!m) return;

@@ -1,8 +1,10 @@
 # SOTREP Live
 
+![Downloads](https://img.shields.io/github/downloads/MrNickIE/sotrep-live/total?label=installs%20%2B%20updates) ![Latest release](https://img.shields.io/github/v/release/MrNickIE/sotrep-live?label=latest)
+
 ## Install from this link, nothing else
 
-**https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.user.js**
+**https://github.com/MrNickIE/sotrep-live/releases/latest/download/sotrep-live.user.js**
 
 Open it in Chrome with [Tampermonkey](https://www.tampermonkey.net/) installed and click **Install**. It then updates itself whenever a new version is pushed here.
 
