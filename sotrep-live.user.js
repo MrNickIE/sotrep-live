@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      1.0.4
+// @version      1.0.5
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js
@@ -262,6 +262,7 @@
     .side .pres{color:var(--c-mute)}
     .side .pres.on{color:var(--c-ok)}
     .side .pres.sot{color:var(--c-acc)}
+    .panel-head{display:flex;align-items:center;justify-content:space-between;max-width:820px}
     .fld .tabs{justify-self:start}
     .tag.met{background:var(--c-bg4);color:var(--c-fg3);cursor:help}
     .filters{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 16px;background:var(--c-bg2);border-bottom:1px solid var(--c-l1)}
@@ -607,7 +608,7 @@
     }
   }
 
-  let listEl, statusEl, nameBox, panelEl, versionEl, rootEl, filterEl, filterCount, newsEl;
+  let setSettings, listEl, statusEl, nameBox, panelEl, versionEl, rootEl, filterEl, filterCount, newsEl;
   function setView(v) { session.setView(v); }
 
   // ---------- display: theme and layout ----------
@@ -705,6 +706,9 @@
   // ---------- what's new ----------
   // One short list per release, shown once after an update. A fresh install sees nothing: it has nothing to compare to.
   const WHATS_NEW = {
+    '1.0.5': [
+      'Settings is easier to close: the button says Close settings while open, the panel has a Close button, and Esc or switching tab closes it.',
+    ],
     '1.0.4': [
       'The session card now says how many players are LIVE on Twitch right now, and how many were live, instead of counting everyone with a Twitch channel as a streamer.',
     ],
@@ -815,6 +819,7 @@
       render();
     });
     panelEl = h('div', { class: 'panel', style: 'display:none' },
+      h('div', { class: 'panel-head' }, h('div', { class: 'panel-t' }, 'Settings'), h('button', { class: 'btn', onclick: () => setSettings(false) }, 'Close')),
       h('div', { class: 'panel-t' }, 'Alerts'),
       field('Alert on', h('div', { class: 'stack' },
         check('severe', 'Red: severe flags or banned accounts'),
@@ -847,14 +852,18 @@
     nameBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') checkName(); });
 
     const alertsBtn = h('button', { class: 'btn quiet', title: 'Settings' }, 'Settings');
-    alertsBtn.addEventListener('click', () => {
-      const open = panelEl.style.display !== 'none';
-      panelEl.style.display = open ? 'none' : '';
-      alertsBtn.classList.toggle('on', !open);
-    });
+    // one way in, four ways out: the button (which says Close settings while open), the Close button in the panel, Esc, or a tab
+    setSettings = (open) => {
+      panelEl.style.display = open ? '' : 'none';
+      alertsBtn.classList.toggle('on', open);
+      alertsBtn.textContent = open ? 'Close settings' : 'Settings';
+      if (open) rootEl.scrollTo(0, 0);
+    };
+    alertsBtn.addEventListener('click', () => setSettings(panelEl.style.display === 'none'));
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && panelEl.style.display !== 'none') setSettings(false); });
 
-    const tabRecent = h('button', { class: 'tab on', onclick: () => setView('recent') }, 'Recent');
-    const tabHistory = h('button', { class: 'tab', onclick: () => setView('history') }, 'History');
+    const tabRecent = h('button', { class: 'tab on', onclick: () => { setSettings(false); setView('recent'); } }, 'Recent');
+    const tabHistory = h('button', { class: 'tab', onclick: () => { setSettings(false); setView('history'); } }, 'History');
     session.setView = (v) => { session.view = v; tabRecent.classList.toggle('on', v === 'recent'); tabHistory.classList.toggle('on', v === 'history'); filterEl.style.display = v === 'history' ? '' : 'none'; render(); };
 
     versionEl = h('a', { class: 'ver', href: RAW_URL, target: '_blank', rel: 'noopener', title: 'Click to update or reinstall through Tampermonkey', onclick: armReloadOnReturn }, 'v' + MY_VERSION);
