@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      1.0.3
+// @version      1.0.4
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js
@@ -58,6 +58,7 @@
     me: GM_getValue('me', null),                   // { gt, xuid } for the signed-in player, so the Xbox ID lookup happens once
     inList: GM_getValue('inList', null),           // gamertag -> true for everyone present at the last poll (null until first poll)
     missing: GM_getValue('missing', {}),           // gamertag -> consecutive polls absent from the list
+    lives: GM_getValue('lives', {}),               // gamertag -> ISO time a Twitch check last found them live (last 30 days)
     meets: GM_getValue('meets', {}),               // gamertag -> ISO times you met them (last 30 days, newest last)
     ui: Object.assign({ theme: 'dark', layout: 'comfortable' }, GM_getValue('ui', {})),
     lastVersion: GM_getValue('lastVersion', null), // the version that last ran, so "what's new" shows once per update
@@ -93,7 +94,8 @@
       const keep = Array.isArray(arr) ? arr.filter(t => Date.parse(t) >= cutoff).slice(-30) : [];
       if (!Array.isArray(arr) || keep.length !== arr.length) { pruned = true; if (keep.length) state.meets[gt] = keep; else delete state.meets[gt]; }
     }
-    if (pruned) save(['meets']);
+    for (const [gt, t] of Object.entries(state.lives)) if (!(Date.parse(t) >= cutoff)) { delete state.lives[gt]; pruned = true; }
+    if (pruned) save(['meets', 'lives']);
   }
 
   // in-memory
@@ -555,6 +557,7 @@
       const prev = liveEntry(login);
       const r = await fetchTwitchLive(login);
       session.live.set(login, { at: Date.now(), live: r.live, title: r.title || '', url: `https://www.twitch.tv/${login}`, error: r.error });
+      if (r.live && gt) { state.lives[gt] = new Date().toISOString(); save(['lives']); }   // so the session card can say who was live
       render();
       // alert on the transition to live (or the first time we see them live), not on every re-check
       if (r.live && !(prev && prev.live) && session.order.includes(gt) && !session.manual.has(gt)) fireStreamerAlert(gt, login, r.title);
@@ -702,6 +705,9 @@
   // ---------- what's new ----------
   // One short list per release, shown once after an update. A fresh install sees nothing: it has nothing to compare to.
   const WHATS_NEW = {
+    '1.0.4': [
+      'The session card now says how many players are LIVE on Twitch right now, and how many were live, instead of counting everyone with a Twitch channel as a streamer.',
+    ],
     '1.0.3': [
       'A row now says how many times you have met a player, and when before this.',
       'A session card on Recent sums up who you met: flags, streamers, and the worst and best of them.',
@@ -977,14 +983,20 @@
       start = t; prev = t; members.add(gt);
     }
     const n = { red: 0, orange: 0, yellow: 0, clean: 0, unchecked: 0 };
-    let again = 0, streamers = 0, worst = null, best = null;
+    let again = 0, streamers = 0, liveNow = 0, wasLive = 0, worst = null, best = null;
     for (const gt of members) {
       if (meetList(gt).some(t => Date.parse(t) < start)) again++;
       const e = state.cache[gt], rep = e && e.rep;
       if (!rep || rep.error) { n.unchecked++; continue; }
       const cls = repClass(rep);
       n[{ severe: 'red', moderate: 'orange', light: 'yellow' }[cls] || 'clean']++;
-      if (twitchLogin(rep)) streamers++;
+      const login = twitchLogin(rep);
+      if (login) {
+        streamers++;
+        const lv = liveEntry(login);
+        if (lv && lv.live && liveFresh(login)) liveNow++;
+        else if (state.lives[gt] && Date.parse(state.lives[gt]) >= start - 60e3) wasLive++;
+      }
       const score = flagScore(rep);
       if (score > 0 && (!worst || score > worst.score)) worst = { gt, score, rep };
       if (score === 0 && (rep.badges || []).length && !best) best = { gt, rep };
@@ -1005,7 +1017,9 @@
         n.clean ? chip('green', `${n.clean} clean`) : null,
         n.unchecked ? chip('', `${n.unchecked} not checked`) : null,
         again ? chip('met', `${again} met before`) : null,
-        streamers ? chip('', `${streamers} streamer${streamers > 1 ? 's' : ''}`) : null,
+        streamers ? chip('', `${streamers} with a Twitch channel`) : null,
+        liveNow ? h('span', { class: 'tag live' }, `${liveNow} LIVE now`) : null,
+        wasLive ? chip('', `${wasLive} was live`) : null,
         worst ? who('Worst:', worst, `(${repLabel(worst.rep)})`) : null,
         best ? who('Best:', best, `(${tagName(best.rep.badges[0])})`) : null,
       ),
@@ -1396,7 +1410,7 @@
   }
   function clearSession() { session.order = []; session.queue = []; render(); setStatus(statusLine()); }
   function resetAll() {
-    state.seen = {}; state.cache = {}; state.baselined = false; state.baselineAt = null; state.inList = null; state.missing = {}; state.meets = {}; save();
+    state.seen = {}; state.cache = {}; state.baselined = false; state.baselineAt = null; state.inList = null; state.missing = {}; state.meets = {}; state.lives = {}; save();
     session.order = []; session.queue = [];
     poll();
   }
