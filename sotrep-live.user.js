@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      1.0.2
+// @version      1.0.3
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js
@@ -58,6 +58,9 @@
     me: GM_getValue('me', null),                   // { gt, xuid } for the signed-in player, so the Xbox ID lookup happens once
     inList: GM_getValue('inList', null),           // gamertag -> true for everyone present at the last poll (null until first poll)
     missing: GM_getValue('missing', {}),           // gamertag -> consecutive polls absent from the list
+    meets: GM_getValue('meets', {}),               // gamertag -> ISO times you met them (last 30 days, newest last)
+    ui: Object.assign({ theme: 'dark', layout: 'comfortable' }, GM_getValue('ui', {})),
+    lastVersion: GM_getValue('lastVersion', null), // the version that last ran, so "what's new" shows once per update
     alerts: Object.assign(
       { sound: true, discord: '', desktop: false, severe: true, moderate: true, streamers: true },
       GM_getValue('alerts', {}),
@@ -82,6 +85,16 @@
     }
     if (trimmed) save(['cache']);
   }
+  // The meeting log keeps 30 days and 30 entries a player, so it stays small however long the script runs.
+  {
+    const cutoff = Date.now() - 30 * 864e5;
+    let pruned = false;
+    for (const [gt, arr] of Object.entries(state.meets)) {
+      const keep = Array.isArray(arr) ? arr.filter(t => Date.parse(t) >= cutoff).slice(-30) : [];
+      if (!Array.isArray(arr) || keep.length !== arr.length) { pruned = true; if (keep.length) state.meets[gt] = keep; else delete state.meets[gt]; }
+    }
+    if (pruned) save(['meets']);
+  }
 
   // in-memory
   const session = {
@@ -92,6 +105,7 @@
     lastPoll: null,
     count: 0,
     view: 'recent',     // 'recent' | 'history'
+    hist: { q: '', colour: 'all', streamers: false, repeat: false },   // History search and filters
     manual: new Set(),  // gamertags looked up by hand (Check box, History button): never alert on these
     live: new Map(),    // twitch login -> { at, live, title, url }
     liveQueue: [],
@@ -102,117 +116,135 @@
 
   // Restore anyone first seen recently so a refresh does not wipe the board mid-session.
   // Baseline names (everyone present on the very first poll) are never "recent", whatever their stamp.
-  {
+  function restoreRecent() {
     const cutoff = Date.now() - RECENT_WINDOW_MIN * 60e3;
     session.order = Object.entries(state.seen)
       .filter(([, iso]) => iso !== state.baselineAt && Date.parse(iso) >= cutoff)
       .sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]))
       .map(([gt]) => gt);
   }
+  restoreRecent();
+
+  // Every time the game registers you meeting someone is logged, which drives "met 4 times" and the session summary.
+  // Before 1.0.3 only the latest time was kept, so a player met earlier starts from that one time.
+  function recordMeet(gt, now, prevSeen) {
+    let a = state.meets[gt];
+    if (!a) { a = []; if (prevSeen && prevSeen !== state.baselineAt) a.push(prevSeen); }
+    a.push(now);
+    state.meets[gt] = a.slice(-30);
+  }
+  function meetList(gt) {
+    const a = state.meets[gt];
+    if (a) return a;
+    const iso = state.seen[gt];
+    return iso && iso !== baselineStamp() ? [iso] : [];
+  }
 
   // ---------- UI (inside a shadow root so site CSS cannot reach it) ----------
   const css = `
     :host{all:initial}
+    .root{--c-bg0:#0e1114;--c-bg1:#141920;--c-bg2:#11161c;--c-bg3:#161c24;--c-bg4:#1f2733;--c-sevbg:#1a1416;--c-l1:#222a34;--c-l2:#2a3340;--c-l3:#3a4454;--c-fg:#e6e4dd;--c-fgs:#f2f1ec;--c-fg2:#c7cdd6;--c-fg3:#aeb7c2;--c-fg4:#9fb3c8;--c-mute:#8a93a0;--c-mute2:#6f7986;--c-mute3:#5e6875;--c-mute4:#4c5663;--c-acc:#7fb7ff;--c-ok:#4fb57f;--c-lt:#d7b545;--c-mod:#eb9150;--c-sev:#ef6b63;--c-ambbg:#3a2d12;--c-amb:#e6b85c;--c-ambbd:#6b4a1a;--c-grnbg:#143426;--c-grn:#6fcf97;--c-grnbd:#1f5a3a;--c-redbg:#44201e;--c-red:#f08a84;color-scheme:dark}
+    .root.light{--c-bg0:#f1f3f6;--c-bg1:#ffffff;--c-bg2:#f8f9fb;--c-bg3:#f3f4f7;--c-bg4:#e4e8ee;--c-sevbg:#fdf0ef;--c-l1:#e2e6eb;--c-l2:#cdd3db;--c-l3:#b0b8c3;--c-fg:#1b2128;--c-fgs:#0b0f14;--c-fg2:#38414c;--c-fg3:#4a5462;--c-fg4:#4a6078;--c-mute:#5b6676;--c-mute2:#657080;--c-mute3:#768091;--c-mute4:#8791a0;--c-acc:#1d5fc4;--c-ok:#1b7a4a;--c-lt:#8f7008;--c-mod:#b0540c;--c-sev:#bf3029;--c-ambbg:#fdf0d3;--c-amb:#85600f;--c-ambbd:#e2c071;--c-grnbg:#dcf3e5;--c-grn:#1b7a4a;--c-grnbd:#9dd2b3;--c-redbg:#fbe2e0;--c-red:#b3302a;color-scheme:light}
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-    .root{position:fixed;inset:0;z-index:2147483000;background:#0e1114;color:#e6e4dd;
+    .root{position:fixed;inset:0;z-index:2147483000;background:var(--c-bg0);color:var(--c-fg);
       font:13px/1.45 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;overflow-y:auto}
     .bar{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;min-height:48px;padding:8px 16px;
-      background:#141920;border-bottom:1px solid #222a34}
+      background:var(--c-bg1);border-bottom:1px solid var(--c-l1)}
     .bar .tabs{flex-shrink:0}
     .controls{display:flex;align-items:center;gap:10px;margin-left:auto;flex:1 1 auto;justify-content:flex-end;min-width:0}
     .controls .search{margin-right:auto}
     .brand{font-weight:700;font-size:14px;letter-spacing:.02em;white-space:nowrap}
-    .brand b{color:#7fb7ff;font-weight:700}
-    .ver{margin-left:8px;font-size:11px;font-weight:500;color:#6f7986;text-decoration:none;padding:1px 6px;border-radius:999px;border:1px solid #2a3340;vertical-align:middle}
-    .ver:hover{color:#e6e4dd;border-color:#3a4454}
-    .ver.stale{color:#e6b85c;border-color:#6b4a1a;background:#3a2d12}
-    .status{color:#8a93a0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1 1 200px}
+    .brand b{color:var(--c-acc);font-weight:700}
+    .ver{margin-left:8px;font-size:11px;font-weight:500;color:var(--c-mute2);text-decoration:none;padding:1px 6px;border-radius:999px;border:1px solid var(--c-l2);vertical-align:middle}
+    .ver:hover{color:var(--c-fg);border-color:var(--c-l3)}
+    .ver.stale{color:var(--c-amb);border-color:var(--c-ambbd);background:var(--c-ambbg)}
+    .status{color:var(--c-mute);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1 1 200px}
     .status .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#2f9e63;margin-right:6px;vertical-align:middle}
     .status .dot.err{background:#d6453d}
-    .me{font-size:11.5px;line-height:20px;padding:0 8px;border-radius:999px;border:1px solid #2a3340;color:#8a93a0;white-space:nowrap;cursor:help}
-    .me.ok{color:#4fb57f;border-color:#1f5a3a;background:#143426}
-    .me.warn{color:#e6b85c;border-color:#6b4a1a;background:#3a2d12}
-    .search{display:flex;align-items:center;background:#0e1114;border:1px solid #2a3340;border-radius:6px;height:30px;overflow:hidden;flex:1 1 160px;max-width:420px}
-    .search input{all:unset;flex:1;min-width:0;height:30px;padding:0 10px;color:#e6e4dd;font:12.5px ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
-    .search input::placeholder{color:#5e6875}
-    .search button{all:unset;cursor:pointer;height:30px;padding:0 10px;color:#9fb3c8;font-size:12px;border-left:1px solid #2a3340}
-    .search button:hover{background:#1b2230;color:#e6e4dd}
-    .btn{all:unset;cursor:pointer;height:30px;padding:0 10px;border-radius:6px;border:1px solid #2a3340;background:#161c24;color:#c7cdd6;font-size:12px;white-space:nowrap}
-    .btn:hover{background:#1f2733;color:#fff}
-    .btn.quiet{border-color:transparent;background:transparent;color:#8a93a0}
-    .btn.quiet:hover{background:#1f2733;color:#e6e4dd}
+    .me{font-size:11.5px;line-height:20px;padding:0 8px;border-radius:999px;border:1px solid var(--c-l2);color:var(--c-mute);white-space:nowrap;cursor:help}
+    .me.ok{color:var(--c-ok);border-color:var(--c-grnbd);background:var(--c-grnbg)}
+    .me.warn{color:var(--c-amb);border-color:var(--c-ambbd);background:var(--c-ambbg)}
+    .search{display:flex;align-items:center;background:var(--c-bg0);border:1px solid var(--c-l2);border-radius:6px;height:30px;overflow:hidden;flex:1 1 160px;max-width:420px}
+    .search input{all:unset;flex:1;min-width:0;height:30px;padding:0 10px;color:var(--c-fg);font:12.5px ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
+    .search input::placeholder{color:var(--c-mute3)}
+    .search button{all:unset;cursor:pointer;height:30px;padding:0 10px;color:var(--c-fg4);font-size:12px;border-left:1px solid var(--c-l2)}
+    .search button:hover{background:var(--c-bg4);color:var(--c-fg)}
+    .btn{all:unset;cursor:pointer;height:30px;padding:0 10px;border-radius:6px;border:1px solid var(--c-l2);background:var(--c-bg3);color:var(--c-fg2);font-size:12px;white-space:nowrap}
+    .btn:hover{background:var(--c-bg4);color:#fff}
+    .btn.quiet{border-color:transparent;background:transparent;color:var(--c-mute)}
+    .btn.quiet:hover{background:var(--c-bg4);color:var(--c-fg)}
     .btn.armed,.btn.armed:hover{background:#6b2320;border-color:#8a2f2b;color:#fff}
-    .tabs{display:flex;background:#0e1114;border:1px solid #2a3340;border-radius:6px;height:30px;overflow:hidden}
-    .tab{all:unset;cursor:pointer;height:30px;padding:0 12px;font-size:12px;color:#8a93a0}
-    .tab:hover{color:#e6e4dd}
-    .tab.on{background:#1f2733;color:#f2f1ec}
-    .mini{all:unset;cursor:pointer;font-size:11px;line-height:18px;height:18px;padding:0 8px;border-radius:4px;border:1px solid #2a3340;color:#9fb3c8}
-    .mini:hover{background:#1f2733;color:#fff}
+    .tabs{display:flex;background:var(--c-bg0);border:1px solid var(--c-l2);border-radius:6px;height:30px;overflow:hidden}
+    .tab{all:unset;cursor:pointer;height:30px;padding:0 12px;font-size:12px;color:var(--c-mute)}
+    .tab:hover{color:var(--c-fg)}
+    .tab.on{background:var(--c-bg4);color:var(--c-fgs)}
+    .mini{all:unset;cursor:pointer;font-size:11px;line-height:18px;height:18px;padding:0 8px;border-radius:4px;border:1px solid var(--c-l2);color:var(--c-fg4)}
+    .mini:hover{background:var(--c-bg4);color:#fff}
     .row.unchecked{opacity:.75}
     .section.fold{cursor:pointer;margin-top:18px;user-select:none}
-    .section.fold:hover{color:#aeb7c2}
-    .section .hint{margin-left:auto;text-transform:none;letter-spacing:0;color:#7fb7ff;font-size:11px}
-    .btn.on{background:#1f2733;color:#f2f1ec}
+    .section.fold:hover{color:var(--c-fg3)}
+    .section .hint{margin-left:auto;text-transform:none;letter-spacing:0;color:var(--c-acc);font-size:11px}
+    .btn.on{background:var(--c-bg4);color:var(--c-fgs)}
     .banner{background:#6b2320;color:#fff;padding:10px 16px;font-size:13px;border-bottom:1px solid #8a2f2b}
     .banner a{color:#fff;font-weight:700;text-decoration:underline}
-    .panel{background:#11161c;border-bottom:1px solid #222a34;padding:14px 16px 16px;display:grid;gap:12px;max-width:100%}
-    .panel-t{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#6f7986}
+    .panel{background:var(--c-bg2);border-bottom:1px solid var(--c-l1);padding:14px 16px 16px;display:grid;gap:12px;max-width:100%}
+    .panel-t{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--c-mute2)}
     .fld{display:grid;grid-template-columns:90px 1fr;gap:4px 14px;align-items:center;max-width:820px}
-    .fld-l{color:#8a93a0;font-size:12px}
-    .fld-h{grid-column:2;color:#5e6875;font-size:11.5px}
+    .fld-l{color:var(--c-mute);font-size:12px}
+    .fld-h{grid-column:2;color:var(--c-mute3);font-size:11.5px}
     .row-ctl.wide{flex-wrap:nowrap}
     .row-ctl.wide input{flex:1;min-width:200px}
-    .fld input[type=text],.fld input[type=password]{all:unset;width:100%;max-width:560px;height:30px;padding:0 10px;border-radius:6px;border:1px solid #2a3340;background:#0e1114;color:#e6e4dd;font:12.5px ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
-    .fld select{all:unset;height:30px;padding:0 10px;border-radius:6px;border:1px solid #2a3340;background:#0e1114;color:#e6e4dd;font-size:12.5px;cursor:pointer}
-    .chk{display:flex;align-items:center;gap:8px;color:#c7cdd6;font-size:12.5px;cursor:pointer}
-    .chk input{all:unset;width:14px;height:14px;border-radius:3px;border:1px solid #3a4454;background:#0e1114;display:inline-block;position:relative;cursor:pointer}
+    .fld input[type=text],.fld input[type=password]{all:unset;width:100%;max-width:560px;height:30px;padding:0 10px;border-radius:6px;border:1px solid var(--c-l2);background:var(--c-bg0);color:var(--c-fg);font:12.5px ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
+    .fld select{all:unset;height:30px;padding:0 10px;border-radius:6px;border:1px solid var(--c-l2);background:var(--c-bg0);color:var(--c-fg);font-size:12.5px;cursor:pointer}
+    .chk{display:flex;align-items:center;gap:8px;color:var(--c-fg2);font-size:12.5px;cursor:pointer}
+    .chk input{all:unset;width:14px;height:14px;border-radius:3px;border:1px solid var(--c-l3);background:var(--c-bg0);display:inline-block;position:relative;cursor:pointer}
     .chk input:checked{background:#2f9e63;border-color:#2f9e63}
     .chk input:checked::after{content:"";position:absolute;left:4px;top:1px;width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
     .row-ctl{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
     .stack{display:grid;gap:6px}
-    .toggle{display:flex;align-items:center;gap:6px;color:#8a93a0;font-size:12px;white-space:nowrap;cursor:pointer;user-select:none}
-    .toggle input{all:unset;width:28px;height:16px;border-radius:999px;background:#2a3340;position:relative;transition:background .15s;cursor:pointer}
-    .toggle input::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#8a93a0;transition:left .15s,background .15s}
+    .toggle{display:flex;align-items:center;gap:6px;color:var(--c-mute);font-size:12px;white-space:nowrap;cursor:pointer;user-select:none}
+    .toggle input{all:unset;width:28px;height:16px;border-radius:999px;background:var(--c-l2);position:relative;transition:background .15s;cursor:pointer}
+    .toggle input::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:var(--c-mute);transition:left .15s,background .15s}
     .toggle input:checked{background:#2f9e63}
     .toggle input:checked::after{left:14px;background:#fff}
     .list,.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(520px,1fr));gap:8px;align-content:start}
     @media (max-width:600px){.list,.grid{grid-template-columns:1fr}}
     .list{padding:14px 16px 40px}
     .grid{grid-column:1/-1}
-    .section{grid-column:1/-1;display:flex;align-items:baseline;gap:8px;color:#6f7986;font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin:6px 0 2px}
-    .section span{color:#4c5663}
-    .empty{grid-column:1/-1;color:#6f7986;padding:28px 0;font-size:13px}
+    .section{grid-column:1/-1;display:flex;align-items:baseline;gap:8px;color:var(--c-mute2);font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin:6px 0 2px}
+    .section span{color:var(--c-mute4)}
+    .empty{grid-column:1/-1;color:var(--c-mute2);padding:28px 0;font-size:13px}
     .row{display:grid;grid-template-columns:40px 1fr auto;gap:12px;align-items:center;padding:10px 12px 10px 10px;min-width:0;
-      border-radius:8px;background:#141920;border:1px solid #1d2531;border-left:3px solid #3a4454}
+      border-radius:8px;background:var(--c-bg1);border:1px solid var(--c-l1);border-left:3px solid var(--c-l3)}
     .row.clean{border-left-color:#2f9e63}
     .row.light{border-left-color:#c9a227}
     .row.moderate{border-left-color:#e07b2a}
-    .row.severe{border-left-color:#d6453d;background:#1a1416}
+    .row.severe{border-left-color:#d6453d;background:var(--c-sevbg)}
     .row.pending{opacity:.65}
-    .pic{width:40px;height:40px;border-radius:6px;background:#1f2733;object-fit:cover;display:flex;align-items:center;justify-content:center;
-      color:#8a93a0;font-weight:700;font-size:16px}
+    .pic{width:40px;height:40px;border-radius:6px;background:var(--c-bg4);object-fit:cover;display:flex;align-items:center;justify-content:center;
+      color:var(--c-mute);font-weight:700;font-size:16px}
     .main{min-width:0}
     .line{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;min-width:0}
-    .name{font-weight:600;font-size:14px;color:#f2f1ec;text-decoration:none}
+    .name{font-weight:600;font-size:14px;color:var(--c-fgs);text-decoration:none}
     .name:hover{text-decoration:underline}
-    .rep{font-size:12px;color:#8a93a0}
-    .row.clean .rep{color:#4fb57f}
-    .row.light .rep{color:#d7b545}
-    .row.moderate .rep{color:#eb9150}
-    .row.severe .rep{color:#ef6b63;font-weight:600}
+    .rep{font-size:12px;color:var(--c-mute)}
+    .row.clean .rep{color:var(--c-ok)}
+    .row.light .rep{color:var(--c-lt)}
+    .row.moderate .rep{color:var(--c-mod)}
+    .row.severe .rep{color:var(--c-sev);font-weight:600}
     .meta{display:flex;flex-wrap:wrap;gap:4px 6px;margin-top:5px;align-items:center;min-width:0}
     .social{overflow:hidden;text-overflow:ellipsis;max-width:100%}
-    .tag{font-size:11px;line-height:18px;height:18px;padding:0 7px;border-radius:4px;background:#1f2733;color:#aeb7c2;white-space:nowrap}
-    .tag.amber{background:#3a2d12;color:#e6b85c}
-    .tag.green{background:#143426;color:#6fcf97}
-    .tag.red{background:#44201e;color:#f08a84}
+    .tag{font-size:11px;line-height:18px;height:18px;padding:0 7px;border-radius:4px;background:var(--c-bg4);color:var(--c-fg3);white-space:nowrap}
+    .tag.amber{background:var(--c-ambbg);color:var(--c-amb)}
+    .tag.green{background:var(--c-grnbg);color:var(--c-grn)}
+    .tag.red{background:var(--c-redbg);color:var(--c-red)}
     .tag.live{background:#9146ff;color:#fff;font-weight:600;text-decoration:none}
     .tag.live:hover{background:#a970ff}
-    .social{font-size:11px;color:#8a93a0;white-space:nowrap;display:inline-flex;gap:8px;align-items:center}
-    .soc{display:inline-flex;align-items:center;gap:4px;color:#8a93a0;text-decoration:none}
-    a.soc{color:#aeb7c2}
+    .social{font-size:11px;color:var(--c-mute);white-space:nowrap;display:inline-flex;gap:8px;align-items:center}
+    .soc{display:inline-flex;align-items:center;gap:4px;color:var(--c-mute);text-decoration:none}
+    a.soc{color:var(--c-fg3)}
     a.soc:hover{color:#fff}
-    .pbadge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 3px;border-radius:4px;font-size:9.5px;font-weight:700;letter-spacing:.02em;color:#fff;background:#3a4454}
+    .pbadge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 3px;border-radius:4px;font-size:9.5px;font-weight:700;letter-spacing:.02em;color:#fff;background:var(--c-l3)}
     .pbadge.twitch{background:#9146ff}
     .pbadge.discord{background:#5865f2}
     .pbadge.steam{background:#1b2838;border:1px solid #2a475e}
@@ -224,10 +256,30 @@
     .pbadge.instagram{background:#c13584}
     .pbadge.reddit{background:#ff4500}
     .pbadge.bluesky{background:#1185fe}
-    .side{text-align:right;font-size:11.5px;color:#6f7986;white-space:nowrap;line-height:1.5}
-    .side .pres{color:#8a93a0}
-    .side .pres.on{color:#4fb57f}
-    .side .pres.sot{color:#7fb7ff}
+    .side{text-align:right;font-size:11.5px;color:var(--c-mute2);white-space:nowrap;line-height:1.5}
+    .side .pres{color:var(--c-mute)}
+    .side .pres.on{color:var(--c-ok)}
+    .side .pres.sot{color:var(--c-acc)}
+    .fld .tabs{justify-self:start}
+    .tag.met{background:var(--c-bg4);color:var(--c-fg3);cursor:help}
+    .filters{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 16px;background:var(--c-bg2);border-bottom:1px solid var(--c-l1)}
+    .filters .count{color:var(--c-mute2);font-size:12px;margin-left:auto}
+    .recap{grid-column:1/-1;display:grid;gap:6px;padding:10px 12px;border-radius:8px;background:var(--c-bg1);border:1px solid var(--c-l1);margin-bottom:4px}
+    .recap-t{display:flex;align-items:baseline;gap:8px;color:var(--c-fg3);font-size:12px}
+    .recap-t b{color:var(--c-fgs);font-size:13px}
+    .recap .meta{margin-top:0}
+    .recap .name{font-size:12.5px}
+    .news{background:var(--c-bg2);border-bottom:1px solid var(--c-l1);border-left:3px solid var(--c-acc);padding:10px 16px;display:grid;gap:4px;font-size:12.5px}
+    .news b{color:var(--c-fgs)}
+    .news ul{padding-left:18px;color:var(--c-fg2)}
+    .news .btn{justify-self:start;margin-top:4px}
+    .root.compact .list{padding:8px 12px 28px;gap:5px;grid-template-columns:repeat(auto-fit,minmax(380px,1fr))}
+    @media (max-width:600px){.root.compact .list{grid-template-columns:1fr}}
+    .root.compact .row{padding:5px 8px 5px 7px;gap:9px;grid-template-columns:28px 1fr auto}
+    .root.compact .pic{width:28px;height:28px;font-size:13px}
+    .root.compact .name{font-size:13px}
+    .root.compact .meta{margin-top:2px}
+    .root.compact .section{margin:2px 0 0}
   `;
 
   function h(tag, attrs, ...kids) {
@@ -552,8 +604,123 @@
     }
   }
 
-  let listEl, statusEl, nameBox, panelEl, versionEl;
+  let listEl, statusEl, nameBox, panelEl, versionEl, rootEl, filterEl, filterCount, newsEl;
   function setView(v) { session.setView(v); }
+
+  // ---------- display: theme and layout ----------
+  const darkQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  function applyDisplay() {
+    if (!rootEl) return;
+    const light = state.ui.theme === 'light' || (state.ui.theme === 'auto' && !!darkQuery && !darkQuery.matches);
+    rootEl.classList.toggle('light', light);
+    rootEl.classList.toggle('compact', state.ui.layout === 'compact');
+  }
+  if (darkQuery && darkQuery.addEventListener) darkQuery.addEventListener('change', applyDisplay);
+  // a row of buttons where one is on; .pick(value) sets it from code
+  function segmented(options, current, onPick) {
+    const wrap = h('div', { class: 'tabs' });
+    const btns = options.map(([v, label]) => h('button', { class: 'tab' + (v === current ? ' on' : ''), 'data-v': v }, label));
+    wrap.pick = (v) => btns.forEach(b => b.classList.toggle('on', b.getAttribute('data-v') === v));
+    btns.forEach(b => b.addEventListener('click', () => { wrap.pick(b.getAttribute('data-v')); onPick(b.getAttribute('data-v')); }));
+    wrap.append(...btns);
+    return wrap;
+  }
+
+  // ---------- backup: export and import ----------
+  // Everything lives in Tampermonkey's storage in this browser. A backup file is the only copy anywhere else.
+  // The Discord webhook is a posting credential, so it is never written to the file and an import never touches it.
+  const BAD_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+  const okKey = (k) => typeof k === 'string' && k.length > 0 && k.length <= 64 && !BAD_KEYS.has(k);
+  const okIso = (t) => typeof t === 'string' && t.length <= 40 && !isNaN(Date.parse(t));
+  const plain = (o) => !!o && typeof o === 'object' && !Array.isArray(o);
+  function exportBackup() {
+    const data = {
+      format: 'sotrep-live-backup', version: 1, script: MY_VERSION, exported: new Date().toISOString(),
+      seen: state.seen, cache: state.cache, meets: state.meets, baselined: state.baselined, baselineAt: state.baselineAt,
+      inList: state.inList, missing: state.missing, alerts: Object.assign({}, state.alerts, { discord: '' }), ui: state.ui,
+    };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }));
+    const a = h('a', { href: url, download: `sotrep-live-backup-${new Date().toISOString().slice(0, 10)}.json` });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    return `Saved ${Object.keys(state.seen).length} players`;
+  }
+  // a cached sotrep reply from a file: keep the shape, but only plain https pictures and safe profile ids
+  function cleanRep(rep) {
+    if (!plain(rep)) return null;
+    const r = JSON.parse(JSON.stringify(rep));
+    if ('gamerpic_url' in r && !/^https:\/\//i.test(String(r.gamerpic_url || ''))) delete r.gamerpic_url;
+    if ('profile_id' in r && !/^[\w-]{1,64}$/.test(String(r.profile_id))) delete r.profile_id;
+    return r;
+  }
+  // Merges a backup into what is here: new players are added and, on a clash, the newer entry wins.
+  function importBackup(text) {
+    let d;
+    try { d = JSON.parse(text); } catch (e) { return { error: 'That is not a SOTREP Live backup (not a valid file).' }; }
+    if (!plain(d) || d.format !== 'sotrep-live-backup' || !plain(d.seen)) return { error: 'That is not a SOTREP Live backup.' };
+    const impBase = okIso(d.baselineAt) ? d.baselineAt : null;
+    if (!state.baselined && d.baselined === true && impBase) {
+      state.baselined = true; state.baselineAt = impBase;
+      state.inList = plain(d.inList) ? Object.fromEntries(Object.keys(d.inList).filter(okKey).map(k => [k, true])) : null;
+      state.missing = plain(d.missing) ? Object.fromEntries(Object.entries(d.missing).filter(([k, v]) => okKey(k) && Number.isFinite(v)).map(([k, v]) => [k, v | 0])) : {};
+    }
+    let added = 0, updated = 0;
+    for (const [gt, raw] of Object.entries(d.seen)) {
+      if (!okKey(gt) || !okIso(raw)) continue;
+      const iso = impBase && raw === impBase && state.baselineAt ? state.baselineAt : raw;
+      const cur = state.seen[gt];
+      if (!cur) { state.seen[gt] = iso; added++; }
+      else if (Date.parse(iso) > Date.parse(cur)) { state.seen[gt] = iso; updated++; }
+    }
+    if (plain(d.cache)) {
+      for (const [gt, e] of Object.entries(d.cache)) {
+        if (!okKey(gt) || !plain(e) || !Number.isFinite(e.at)) continue;
+        const rp = cleanRep(e.rep);
+        if (!rp) continue;
+        const cur = state.cache[gt];
+        if (!cur || cur.at < e.at) state.cache[gt] = { at: e.at, rep: rp, rechecks: Math.min(e.rechecks | 0, 5), picRetried: !!e.picRetried, ...(e.trimmed === true ? { trimmed: true } : {}) };
+      }
+    }
+    if (plain(d.meets)) {
+      const cutoff = Date.now() - 30 * 864e5;
+      for (const [gt, arr] of Object.entries(d.meets)) {
+        if (!okKey(gt) || !Array.isArray(arr)) continue;
+        const all = [...new Set([...(state.meets[gt] || []), ...arr.filter(okIso)])].filter(t => Date.parse(t) >= cutoff).sort();
+        if (all.length) state.meets[gt] = all.slice(-30);
+      }
+    }
+    if (plain(d.alerts)) for (const k of ['sound', 'desktop', 'severe', 'moderate', 'streamers']) if (typeof d.alerts[k] === 'boolean') state.alerts[k] = d.alerts[k];
+    if (plain(d.ui)) {
+      if (['dark', 'light', 'auto'].includes(d.ui.theme)) state.ui.theme = d.ui.theme;
+      if (['comfortable', 'compact'].includes(d.ui.layout)) state.ui.layout = d.ui.layout;
+    }
+    save();
+    restoreRecent();
+    return { added, updated };
+  }
+
+  // ---------- what's new ----------
+  // One short list per release, shown once after an update. A fresh install sees nothing: it has nothing to compare to.
+  const WHATS_NEW = {
+    '1.0.3': [
+      'A row now says how many times you have met a player, and when before this.',
+      'A session card on Recent sums up who you met: flags, streamers, and the worst and best of them.',
+      'History has search and filters: name, colour, streamers, met more than once.',
+      'Settings has a light theme, a compact layout, and backup: export everything to a file and import it back.',
+    ],
+  };
+  function showNews() {
+    if (state.lastVersion === MY_VERSION || !newsEl) return;
+    const notes = WHATS_NEW[MY_VERSION];
+    const done = () => { state.lastVersion = MY_VERSION; save(['lastVersion']); newsEl.style.display = 'none'; };
+    if (!notes || !state.baselined) { state.lastVersion = MY_VERSION; save(['lastVersion']); return; }
+    newsEl.replaceChildren(
+      h('div', {}, h('b', {}, `What's new in ${MY_VERSION}`)),
+      h('ul', {}, notes.map(n => h('li', {}, n))),
+      h('button', { class: 'btn', onclick: done }, 'Got it'),
+    );
+    newsEl.style.display = '';
+  }
 
   function buildAlertsPanel() {
     const a = state.alerts;
@@ -622,6 +789,25 @@
       try { const p = await Notification.requestPermission(); testMsg.textContent = 'Desktop notifications: ' + p; } catch (e) { testMsg.textContent = 'Not available in this browser'; }
     });
 
+    const themeCtl = segmented([['dark', 'Dark'], ['light', 'Light'], ['auto', 'Match device']], state.ui.theme, (v) => { state.ui.theme = v; save(['ui']); applyDisplay(); });
+    const layoutCtl = segmented([['comfortable', 'Comfortable'], ['compact', 'Compact']], state.ui.layout, (v) => { state.ui.layout = v; save(['ui']); applyDisplay(); });
+    const backupMsg = h('span', { class: 'fld-h', style: 'grid-column:auto' });
+    const exportBtn = h('button', { class: 'btn' }, 'Export backup');
+    exportBtn.addEventListener('click', () => { backupMsg.textContent = exportBackup(); });
+    const fileIn = h('input', { type: 'file', accept: '.json,application/json', style: 'display:none' });
+    const importBtn = h('button', { class: 'btn' }, 'Import backup');
+    importBtn.addEventListener('click', () => fileIn.click());
+    fileIn.addEventListener('change', async () => {
+      const f = fileIn.files && fileIn.files[0];
+      fileIn.value = '';
+      if (!f) return;
+      if (f.size > 20e6) { backupMsg.textContent = 'That file is too big to be a backup.'; return; }
+      const r = importBackup(await f.text());
+      if (r.error) { backupMsg.textContent = r.error; return; }
+      themeCtl.pick(state.ui.theme); layoutCtl.pick(state.ui.layout); applyDisplay();
+      backupMsg.textContent = `Imported: ${r.added} new, ${r.updated} updated`;
+      render();
+    });
     panelEl = h('div', { class: 'panel', style: 'display:none' },
       h('div', { class: 'panel-t' }, 'Alerts'),
       field('Alert on', h('div', { class: 'stack' },
@@ -635,6 +821,11 @@
       field('Desktop', h('div', { class: 'row-ctl' }, check('desktop', 'Windows notification'), desktopBtn), 'Hidden behind a full-screen game; useful on a second screen only.'),
       h('div', { class: 'row-ctl' }, testAll, testMsg),
       field('Connection', h('div', { class: 'row-ctl' }, diagBtn, diagMsg), 'One lookup of your own gamertag against sotrep.com with the result and timing, for when rows sit on "queued" or show refusals.'),
+      h('div', { class: 'panel-t' }, 'Display'),
+      field('Theme', themeCtl),
+      field('Layout', layoutCtl, 'Compact fits more players on screen.'),
+      h('div', { class: 'panel-t' }, 'Your data'),
+      field('Backup', h('div', { class: 'row-ctl' }, exportBtn, importBtn, fileIn, backupMsg), 'Everything this tool remembers (who you met, lookups, settings) lives in Tampermonkey in this browser only. Export saves it to a file you keep. Import adds a backup back in and keeps the newer entry on a clash. Your Discord webhook is never put in the file.'),
     );
     return panelEl;
   }
@@ -649,7 +840,7 @@
     nameBox = h('input', { type: 'text', placeholder: 'Check a gamertag', spellcheck: 'false', autocomplete: 'off' });
     nameBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') checkName(); });
 
-    const alertsBtn = h('button', { class: 'btn quiet', title: 'Alert settings' }, 'Alerts');
+    const alertsBtn = h('button', { class: 'btn quiet', title: 'Settings' }, 'Settings');
     alertsBtn.addEventListener('click', () => {
       const open = panelEl.style.display !== 'none';
       panelEl.style.display = open ? 'none' : '';
@@ -658,7 +849,7 @@
 
     const tabRecent = h('button', { class: 'tab on', onclick: () => setView('recent') }, 'Recent');
     const tabHistory = h('button', { class: 'tab', onclick: () => setView('history') }, 'History');
-    session.setView = (v) => { session.view = v; tabRecent.classList.toggle('on', v === 'recent'); tabHistory.classList.toggle('on', v === 'history'); render(); };
+    session.setView = (v) => { session.view = v; tabRecent.classList.toggle('on', v === 'recent'); tabHistory.classList.toggle('on', v === 'history'); filterEl.style.display = v === 'history' ? '' : 'none'; render(); };
 
     versionEl = h('a', { class: 'ver', href: RAW_URL, target: '_blank', rel: 'noopener', title: 'Click to update or reinstall through Tampermonkey', onclick: armReloadOnReturn }, 'v' + MY_VERSION);
     const bar = h('div', { class: 'bar' },
@@ -675,13 +866,31 @@
     );
     listEl = h('div', { class: 'list' });
     bannerEl = h('div', { class: 'banner', style: 'display:none' });
-    const root = h('div', { class: 'root' }, bar, bannerEl, buildAlertsPanel(), listEl);
+    newsEl = h('div', { class: 'news', style: 'display:none' });
+    // History filters live outside the list so typing is not interrupted when the board redraws
+    const histBox = h('input', { type: 'text', placeholder: 'Search name, social or tag', spellcheck: 'false', autocomplete: 'off' });
+    histBox.addEventListener('input', () => { session.hist.q = histBox.value.trim(); render(); });
+    const histToggle = (label, key) => {
+      const c = h('input', { type: 'checkbox' });
+      c.addEventListener('change', () => { session.hist[key] = c.checked; render(); });
+      return h('label', { class: 'toggle' }, c, label);
+    };
+    filterEl = h('div', { class: 'filters', style: 'display:none' },
+      h('div', { class: 'search' }, histBox),
+      segmented([['all', 'All'], ['red', 'Red'], ['orange', 'Orange'], ['yellow', 'Yellow'], ['green', 'Green'], ['unchecked', 'Not checked']], 'all', (v) => { session.hist.colour = v; render(); }),
+      histToggle('Streamers', 'streamers'), histToggle('Met more than once', 'repeat'),
+      (filterCount = h('span', { class: 'count' })),
+    );
+    const root = h('div', { class: 'root' }, bar, bannerEl, newsEl, buildAlertsPanel(), filterEl, listEl);
+    rootEl = root;
+    applyDisplay();
     // any click on the board counts as the user gesture Chrome wants before a tab may play audio
     root.addEventListener('click', ensureAudio, { once: true });
     shadow.append(root);
     document.body.append(host);
     document.title = 'SOTREP Live';
     render();
+    showNews();
   }
 
   function setStatus(txt, err) {
@@ -739,6 +948,8 @@
   function render() {
     listEl.replaceChildren();
     if (session.view === 'history') return renderHistory();
+    const recap = sessionRecap();
+    if (recap) listEl.append(recap);
     if (!session.order.length) {
       listEl.append(h('div', { class: 'empty' }, state.baselined
         ? `Watching. ${Object.keys(state.seen).length} names remembered; new encounters appear here as the game registers them. History shows everyone seen so far.`
@@ -749,11 +960,81 @@
     for (const gt of session.order) listEl.append(renderRow(gt, false));
   }
 
+  // ---------- session recap ----------
+  // A session is a run of meetings with no gap over 90 minutes, ending at the latest one. Built from the meeting log.
+  const SESSION_GAP_MS = 90 * 60e3;
+  const flagScore = (rep) => ((rep.severe_count | 0) + (rep.banned_xuids || []).length) * 100 + (rep.moderate_count | 0) * 10 + (rep.light_count | 0);
+  function sessionRecap() {
+    const hits = [];
+    for (const gt of Object.keys(state.seen)) for (const t of meetList(gt)) hits.push([Date.parse(t), gt]);
+    hits.sort((a, b) => b[0] - a[0]);
+    if (!hits.length) return null;
+    const end = hits[0][0];
+    let start = end, prev = end;
+    const members = new Set();
+    for (const [t, gt] of hits) {
+      if (prev - t > SESSION_GAP_MS) break;
+      start = t; prev = t; members.add(gt);
+    }
+    const n = { red: 0, orange: 0, yellow: 0, clean: 0, unchecked: 0 };
+    let again = 0, streamers = 0, worst = null, best = null;
+    for (const gt of members) {
+      if (meetList(gt).some(t => Date.parse(t) < start)) again++;
+      const e = state.cache[gt], rep = e && e.rep;
+      if (!rep || rep.error) { n.unchecked++; continue; }
+      const cls = repClass(rep);
+      n[{ severe: 'red', moderate: 'orange', light: 'yellow' }[cls] || 'clean']++;
+      if (twitchLogin(rep)) streamers++;
+      const score = flagScore(rep);
+      if (score > 0 && (!worst || score > worst.score)) worst = { gt, score, rep };
+      if (score === 0 && (rep.badges || []).length && !best) best = { gt, rep };
+    }
+    const hm = (t) => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const mins = Math.max(1, Math.round((end - start) / 60e3));
+    const len = mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`;
+    const live = Date.now() - end < 3 * 3600e3;
+    const chip = (cls, text) => h('span', { class: 'tag ' + cls }, text);
+    const who = (label, o, extra) => h('span', {}, label + ' ', h('a', { class: 'name', href: o.rep.profile_id ? `${SOTREP}/search/${o.rep.profile_id}` : SOTREP + '/', target: '_blank', rel: 'noopener' }, o.gt), ' ' + extra);
+    return h('div', { class: 'recap' },
+      h('div', { class: 'recap-t' }, h('b', {}, live ? 'This session' : `Last session, ${dayLabel(new Date(end)).toLowerCase()}`),
+        `${hm(start)} to ${hm(end)}, ${len}`, h('span', {}, `${members.size} player${members.size > 1 ? 's' : ''}`)),
+      h('div', { class: 'meta' },
+        n.red ? chip('red', `${n.red} red`) : null,
+        n.orange ? chip('amber', `${n.orange} orange`) : null,
+        n.yellow ? chip('', `${n.yellow} yellow`) : null,
+        n.clean ? chip('green', `${n.clean} clean`) : null,
+        n.unchecked ? chip('', `${n.unchecked} not checked`) : null,
+        again ? chip('met', `${again} met before`) : null,
+        streamers ? chip('', `${streamers} streamer${streamers > 1 ? 's' : ''}`) : null,
+        worst ? who('Worst:', worst, `(${repLabel(worst.rep)})`) : null,
+        best ? who('Best:', best, `(${tagName(best.rep.badges[0])})`) : null,
+      ),
+    );
+  }
+
+  // ---------- History search and filters ----------
+  const filtersActive = () => { const f = session.hist; return !!(f.q || f.colour !== 'all' || f.streamers || f.repeat); };
+  function histMatch(gt) {
+    const f = session.hist, e = state.cache[gt], rep = e && e.rep;
+    const ok = !!rep && !rep.error;
+    if (f.q) {
+      const hay = [gt, ...(ok ? [...(rep.socials || []).map(x => x && x.username), ...(rep.manual_tags || []).map(tagName), ...(rep.badges || []).map(tagName)] : [])];
+      if (!hay.some(x => x && String(x).toLowerCase().includes(f.q.toLowerCase()))) return false;
+    }
+    if (f.colour !== 'all') {
+      const cls = ok ? repClass(rep) : 'unchecked';
+      if ({ red: 'severe', orange: 'moderate', yellow: 'light', green: 'clean', unchecked: 'unchecked' }[f.colour] !== cls) return false;
+    }
+    if (f.streamers && !(ok && twitchLogin(rep))) return false;
+    if (f.repeat && meetList(gt).length < 2) return false;
+    return true;
+  }
+
   // A folded group of rows, drawn only while open. The poll re-renders, so each fold remembers its own state.
-  function fold(key, title, entries, sortByName) {
+  function fold(key, title, entries, sortByName, force) {
     session.folds = session.folds || {};
-    const open = !!session.folds[key];
-    const head = h('div', { class: 'section fold' }, title, h('span', {}, entries.length), h('span', { class: 'hint' }, open ? 'hide' : 'show'));
+    const open = force || !!session.folds[key];
+    const head = h('div', { class: 'section fold' }, title, h('span', {}, entries.length), force ? null : h('span', { class: 'hint' }, open ? 'hide' : 'show'));
     head.addEventListener('click', () => { session.folds[key] = !open; render(); });
     listEl.append(head);
     if (!open) return;
@@ -768,19 +1049,23 @@
     const base = baselineStamp();
     const all = Object.entries(state.seen).sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]));
     const cutoff = Date.now() - HISTORY_OPEN_DAYS * 864e5;
-    const tracked = all.filter(([, iso]) => iso !== base);
+    if (!all.length) { filterCount.textContent = ''; listEl.append(h('div', { class: 'empty' }, 'Nothing recorded yet.')); return; }
+    const active = filtersActive();
+    const shown = active ? all.filter(([gt]) => histMatch(gt)) : all;
+    filterCount.textContent = active ? `${shown.length} of ${all.length}` : `${all.length} players`;
+    if (!shown.length) { listEl.append(h('div', { class: 'empty' }, 'No one matches those filters.')); return; }
+    const tracked = shown.filter(([, iso]) => iso !== base);
     const recent = tracked.filter(([, iso]) => Date.parse(iso) >= cutoff);
     const older = tracked.filter(([, iso]) => !(Date.parse(iso) >= cutoff));
-    const baseline = all.filter(([, iso]) => iso === base);
-    if (!tracked.length && !baseline.length) { listEl.append(h('div', { class: 'empty' }, 'Nothing recorded yet.')); return; }
+    const baseline = shown.filter(([, iso]) => iso === base);
     let lastDay = null;
     for (const [gt, iso] of recent) {
       const day = dayLabel(new Date(iso));
       if (day !== lastDay) { listEl.append(h('div', { class: 'section' }, day)); lastDay = day; }
       listEl.append(renderRow(gt, true));
     }
-    if (older.length) fold('older', `Older than ${HISTORY_OPEN_DAYS} days`, older, false);
-    if (baseline.length) fold('baseline', 'Met before tracking started', baseline, true);
+    if (older.length) fold('older', `Older than ${HISTORY_OPEN_DAYS} days`, older, false, active);
+    if (baseline.length) fold('baseline', 'Met before tracking started', baseline, true, active);
   }
 
   function renderRow(gt, withLookupBtn) {
@@ -816,6 +1101,13 @@
         });
       }
 
+      const times = meetList(gt);
+      const metBadge = times.length >= 2 ? (() => {
+        const d = dayLabel(new Date(times[times.length - 2]));
+        const when = d === 'Today' ? 'earlier today' : d === 'Yesterday' ? 'yesterday' : d;
+        return h('span', { class: 'tag met', title: 'Met ' + times.map(t => new Date(t).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })).join(', ') },
+          `met ${times.length} times, before that ${when}`);
+      })() : null;
       const pic = (cur && cur.DisplayPicUrl) || (rep && rep.gamerpic_url) || '';
       // Rare passes on Xbox Live presence as your account sees it. "Offline" would be misleading on a board of
       // people you just met, so the absence of a signal is shown as hidden rather than as a claim they are away.
@@ -838,7 +1130,7 @@
             needsLookup ? h('button', { class: 'mini', onclick: () => { session.manual.add(gt); enqueue(gt, true); render(); } }, 'Look up') : null,
             rep && rep.error ? h('button', { class: 'mini', onclick: () => { delete state.cache[gt]; save(['cache']); enqueue(gt, true); render(); } }, 'Retry') : null,
           ),
-          (tags.length || socials.length) ? h('div', { class: 'meta' }, tags, socials.length ? h('span', { class: 'social' }, socials) : null) : null,
+          (tags.length || socials.length || metBadge) ? h('div', { class: 'meta' }, metBadge, tags, socials.length ? h('span', { class: 'social' }, socials) : null) : null,
         ),
         h('div', { class: 'side', title: presence[2] },
           presence[1] ? h('div', { class: 'pres ' + presence[0] }, presence[1]) : null,
@@ -920,10 +1212,11 @@
           // never seen: a new encounter
           state.seen[gt] = now;
           changed = true;
-          if (state.baselined) fresh.push(gt);
+          if (state.baselined) { fresh.push(gt); recordMeet(gt, now, null); }
         } else if (state.inList && !state.inList[gt] && (state.missing[gt] | 0) >= MISSING_POLLS) {
           // seen before, dropped off Rare's rolling list, now back: you met them again
           // the 24 h cache still applies, so a quick return costs no new lookup
+          recordMeet(gt, now, state.seen[gt]);
           state.seen[gt] = now;
           fresh.push(gt);
         }
@@ -941,7 +1234,7 @@
       } else changed = true;
       state.inList = present;
       if (!state.baselined) { state.baselined = true; state.baselineAt = now; }
-      if (changed || fresh.length) save(['seen', 'inList', 'missing', 'baselined', 'baselineAt']);
+      if (changed || fresh.length) save(['seen', 'meets', 'inList', 'missing', 'baselined', 'baselineAt']);
       for (const gt of fresh) {
         session.order = [gt, ...session.order.filter(x => x !== gt)];   // to the top, even if already on the board
         session.manual.delete(gt);                                        // the game found them this time, so alerts apply
@@ -1062,8 +1355,8 @@
         const real = rep.gamertag;
         session.order = session.order.map(x => x === gt ? real : x).filter((x, i, a) => a.indexOf(x) === i);
         if (session.manual.has(gt)) session.manual.add(real);
-        if (!state.seen[real]) state.seen[real] = state.seen[gt] || new Date().toISOString();
-        delete state.seen[gt]; delete state.cache[gt];
+        if (!state.seen[real]) { state.seen[real] = state.seen[gt] || new Date().toISOString(); state.meets[real] = []; }
+        delete state.seen[gt]; delete state.cache[gt]; delete state.meets[gt];
         gt = real;
       }
       const prev = state.cache[gt];
@@ -1095,15 +1388,15 @@
     nameBox.value = '';
     session.manual.add(gt);
     if (!session.order.includes(gt)) session.order.unshift(gt);
-    if (!state.seen[gt]) state.seen[gt] = new Date().toISOString();
+    if (!state.seen[gt]) { state.seen[gt] = new Date().toISOString(); state.meets[gt] = []; }   // looked up by hand, not a meeting
     delete state.cache[gt];   // you asked by hand, so always fetch fresh
-    save(['seen', 'cache']);
+    save(['seen', 'meets', 'cache']);
     enqueue(gt);
     render();
   }
   function clearSession() { session.order = []; session.queue = []; render(); setStatus(statusLine()); }
   function resetAll() {
-    state.seen = {}; state.cache = {}; state.baselined = false; state.baselineAt = null; state.inList = null; state.missing = {}; save();
+    state.seen = {}; state.cache = {}; state.baselined = false; state.baselineAt = null; state.inList = null; state.missing = {}; state.meets = {}; save();
     session.order = []; session.queue = [];
     poll();
   }
