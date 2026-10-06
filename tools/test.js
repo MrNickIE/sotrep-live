@@ -34,7 +34,7 @@ async function fresh(browser, initial, scheme = 'dark') {
     eq('yellow rows', await q('.row.light').count(), 1);
     eq('green rows', await q('.row.clean').count(), 3);
     eq('version pill', (await q('.ver').textContent()).trim(), 'v' + demo.version);
-    check('live streamer pill', await q('.tag.live').count() === 1, 'no LIVE pill');
+    check('live streamer pill', await q('.row .tag.live').count() === 1, 'no LIVE pill');
     check('whats-new hidden when already seen', !(await q('.news').isVisible()), 'banner shown');
 
     // met again badges and the session card
@@ -43,6 +43,9 @@ async function fresh(browser, initial, scheme = 'dark') {
     const recap = await q('.recap').textContent();
     check('session card shows six players', /6 players/.test(recap), recap);
     check('session card counts flags', /1 red/.test(recap) && /1 orange/.test(recap) && /3 clean/.test(recap), recap);
+
+    check('session card: one live streamer, not every linked channel', /1 LIVE now/.test(recap) && /1 with a Twitch channel/.test(recap), recap);
+    check('live is remembered for the card', await page.evaluate(() => !!__store.lives['Player Two']), 'not stored');
 
     // History, search, filters
     await q('button.tab:has-text("History")').click();
