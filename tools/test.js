@@ -74,6 +74,20 @@ async function fresh(browser, initial, scheme = 'dark') {
     const stored = await page.evaluate(() => __store.ui);
     eq('display choice stored', stored, { theme: 'light', layout: 'compact' });
 
+    // closing settings
+    await page.keyboard.press('Escape');   // earlier steps left the panel open
+    await q('button[title="Settings"]').click();
+    check('settings button says Close settings while open', /Close settings/.test(await q('button[title="Settings"]').textContent()), 'label');
+    await q('.panel-head button:has-text("Close")').click();
+    check('panel Close button closes settings', !(await q('.panel').isVisible()), 'still open');
+    await q('button[title="Settings"]').click();
+    await page.keyboard.press('Escape');
+    check('Esc closes settings', !(await q('.panel').isVisible()), 'still open');
+    await q('button[title="Settings"]').click();
+    await q('button.tab:has-text("Recent")').click();
+    check('switching tab closes settings', !(await q('.panel').isVisible()), 'still open');
+    eq('button label restored', (await q('button[title="Settings"]').textContent()).trim(), 'Settings');
+
     // request budget: nothing but the expected hosts
     const calls = await page.evaluate(() => __calls);
     const odd = calls.filter(u => !/sotrep\.com\/api\/(player\/[^/]+\/xbl-info|search)|twitch\.tv\/|raw\.githubusercontent\.com/.test(u));
