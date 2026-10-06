@@ -24,10 +24,11 @@ Install link: `https://github.com/MrNickIE/sotrep-live/releases/latest/download/
 
 To ship version X.Y.Z:
 
-1. Bump `// @version` in `sotrep-live.user.js`.
+1. Bump `// @version` in `sotrep-live.user.js` and add a short entry for it to `WHATS_NEW` (shown once to people updating).
 2. Regenerate the meta file: `sed -n '/==UserScript==/,/==\/UserScript==/p' sotrep-live.user.js > sotrep-live.meta.js`
 3. Run the checks locally (the Action runs them too):
    - Syntax: `node -e "new Function(require('fs').readFileSync('sotrep-live.user.js','utf8').replace(/GM_\w+/g,'undefined'))"`
+   - Behaviour: `NODE_PATH=$(npm root -g) node tools/test.js` (all checks must pass).
    - Dashes: `LC_ALL=C.UTF-8 grep -cP '\x{2014}|\x{2013}' sotrep-live.user.js README.md` should print 0 for each file.
 4. Refresh the README screenshots: `NODE_PATH=$(npm root -g) node tools/screenshots.js`, then look at all three images before committing (blur on, nothing broken, new features visible). Do this every release; the version pill is in the shots, so they go stale otherwise. If a new feature deserves its own picture, add a step to `tools/screenshots.js` and a line in the README.
 5. Commit the script, meta file and images on a branch and push the branch. Do not merge to `main` yet. Write the commit messages for users: the release notes are built from the subjects of commits that changed `sotrep-live.user.js` since the last release.
