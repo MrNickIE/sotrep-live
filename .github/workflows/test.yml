@@ -1,0 +1,22 @@
+# Runs the browser checks in tools/test.js on every push and pull request.
+name: Test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0, pinned so a moved tag cannot change what runs
+      - name: Install Playwright and Chromium
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw"
+          npm init -y >/dev/null && npm install playwright
+          npx playwright install --with-deps chromium
+      - name: Run the checks
+        run: NODE_PATH="$RUNNER_TEMP/pw/node_modules" node tools/test.js

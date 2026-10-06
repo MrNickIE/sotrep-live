@@ -46,11 +46,11 @@ Whatever the browser, allow the one-time requests Tampermonkey shows for sotrep.
 
 ## Using it
 
-- **Recent** shows players first seen in the last 20 minutes (survives a refresh).
-- **History** shows everyone met in the last 30 days, newest first, with a **Look up** button on anyone not yet checked. Older encounters and names from the baseline sit in collapsed groups at the bottom. After 30 days a player's stored rep is cut down to their colour and summary, which keeps the script light; meet them again and they are looked up afresh.
+- **Recent** shows players first seen in the last 20 minutes (survives a refresh). A **session card** at the top sums up the current run of play (no gap over 90 minutes): how many players, how many red, orange, yellow and clean, how many you had met before, how many are streamers, and the worst and best of them. A row that says **met 3 times, before that yesterday** is someone you have met again; hover it for every date.
+- **History** shows everyone met in the last 30 days, newest first, with a **Look up** button on anyone not yet checked. Older encounters and names from the baseline sit in collapsed groups at the bottom. History has a **search box** (name, social handle or tag) and filters for colour, streamers, and players met more than once. After 30 days a player's stored rep is cut down to their colour and summary, which keeps the script light; meet them again and they are looked up afresh.
 - **Check a gamertag** looks up any name you type, for players you spot in game before Rare registers them. A Twitch channel name works too: if no pirate has that gamertag, sotrep is asked for the pirate linked to that Twitch account.
 - Alerts fire only for players the game registered on its own. Manual lookups (the Check box, History's Look up buttons) never alert.
-- **Alerts** opens the alert settings. Tick what you want to be told about: red (severe flags or banned accounts), orange (moderate flags), purple (a linked streamer who is live), in any mix. A chime plays in the tab by default. Paste a Discord webhook URL to have flagged players posted to a private channel with the rep summary and a profile link, which is the reliable route while a game has the screen. A Windows desktop notification is also available but is hidden behind a full-screen game. **Test alerts** fires every enabled channel once.
+- **Settings** opens the alert settings, the display choices and backup. Tick what you want to be told about: red (severe flags or banned accounts), orange (moderate flags), purple (a linked streamer who is live), in any mix. A chime plays in the tab by default. Paste a Discord webhook URL to have flagged players posted to a private channel with the rep summary and a profile link, which is the reliable route while a game has the screen. A Windows desktop notification is also available but is hidden behind a full-screen game. **Test alerts** fires every enabled channel once.
 - **Streamers**: a player whose sotrep profile links a Twitch channel is checked against Twitch when they appear and every five minutes while on the Recent board. If they are live, the row gets a purple **LIVE on Twitch** pill that opens the stream, and the streamer alert fires (chime, Discord embed with the stream link). Offline streamers just show their Twitch link. The panel has a box to test the live check against any channel name.
 - **Clear** empties the Recent board. **Reset** (press twice) forgets everything and re-baselines.
 
@@ -58,10 +58,27 @@ Left edge and reputation text: green clean, yellow light flags, orange moderate,
 
 ![History: everyone you have met, grouped by day](images/history.png)
 
-![Alert settings: red, orange and streamer alerts by chime, Discord or desktop notification](images/alerts.png)
+![Settings: alerts by chime, Discord or desktop notification, theme, layout and backup](images/settings.png)
+
+![Light theme and compact layout, History filtered to players met more than once](images/light.png)
+
+## Your data and backups
+
+Everything the tool remembers (who you met, lookups, settings) is stored by Tampermonkey in the browser you use it in. Nothing is sent anywhere, and nothing is shared between browsers or computers. A new browser, a different PC or a Tampermonkey reset starts empty.
+
+**Settings, Backup** fixes that. **Export backup** saves everything to a file. **Import backup** adds a backup back in: new players are added, and where both have the same player the newer entry wins. Your Discord webhook is a posting credential, so it is never written to the file and an import never changes it. The meeting log behind "met 3 times" and the session card keeps 30 days.
+
+## Display
+
+**Settings, Display** has a dark theme (the default), a light theme, or match your device, and a compact layout that fits more players on screen. After an update a short **What's new** note appears once.
 
 ## Limits
 
 - Rare's list has no timestamps and no direct "met again" signal. The board infers it: the list is capped and rolling, so a name that has dropped off and comes back is treated as meeting them again (back to the top of Recent, alerts apply). Someone you met very recently who is still in the list will not re-trigger; they are already on Recent. Players from before tracking started show as new only once they have dropped off and returned.
 - "Online" and "Playing SoT" come from Rare, which gets them from Xbox Live presence, so they only appear when the other player's privacy settings allow it. When Xbox shares nothing the row shows just the time you met them; it never claims someone is offline, since they were on your server when they appeared.
+- "Met 3 times" counts from version 1.0.3 onwards. A player you had met before then starts from the one time the tool remembered.
 - Pictures come from Rare's list; manual lookups get a lettered placeholder unless sotrep.com holds an image.
+
+## For developers
+
+`tools/screenshots.js` makes the pictures above and `tools/test.js` checks the board, History filters, themes, backup and what's new in a real browser. Both load the real script against made-up players and answer every request locally (`tools/demo.js`). From the repo root, with Playwright installed: `NODE_PATH=$(npm root -g) node tools/test.js`.
