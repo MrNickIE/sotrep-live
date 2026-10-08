@@ -10,13 +10,13 @@ let failed = 0;
 const check = (name, ok, detail) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok ? '' : ' : ' + detail}`); if (!ok) failed++; };
 const eq = (name, got, want) => check(name, JSON.stringify(got) === JSON.stringify(want), `got ${JSON.stringify(got)}, wanted ${JSON.stringify(want)}`);
 
-async function fresh(browser, initial, scheme = 'dark') {
+async function fresh(browser, initial, scheme = 'dark', opts = {}) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: scheme, acceptDownloads: true });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-  const q = await demo.open(page, initial);
+  const q = await demo.open(page, initial, opts);
   await page.waitForTimeout(1500);
   return { ctx, page, q, errors };
 }
@@ -35,6 +35,7 @@ async function fresh(browser, initial, scheme = 'dark') {
     eq('green rows', await q('.row.clean').count(), 3);
     eq('version pill', (await q('.ver').textContent()).trim(), 'v' + demo.version);
     check('live streamer pill', await q('.row .tag.live').count() === 1, 'no LIVE pill');
+    eq('no sign in buttons when signed in', await q('.status .signin').count(), 0);
     check('whats-new hidden when already seen', !(await q('.news').isVisible()), 'banner shown');
 
     // met again badges and the session card
@@ -174,6 +175,59 @@ async function fresh(browser, initial, scheme = 'dark') {
     check('whats-new not shown on a fresh install', !(await f.q('.news').isVisible()), 'shown');
     eq('fresh install remembers the version', await f.page.evaluate(() => __store.lastVersion), demo.version);
     await f.ctx.close();
+  }
+
+  // ----- signed out of seaofthieves.com -----
+  {
+    let signedIn = false, recentCalls = 0;
+    const { ctx, page, q, errors } = await fresh(browser, demo.store(), 'dark', {
+      recent: () => { recentCalls++; return signedIn ? null : { status: 401, body: '{}' }; },
+    });
+    const btn = q('.status .signin');
+    eq('one Sign in button', await btn.count(), 1);
+    eq('button text', (await btn.textContent()).trim(), 'Sign in to seaofthieves.com');
+    eq('button opens the login page in a new tab', [await btn.getAttribute('href'), await btn.getAttribute('target')], ['https://www.seaofthieves.com/login', '_blank']);
+    check('status says not signed in', /Not signed in to seaofthieves\.com/.test(await q('.status').textContent()), await q('.status').textContent());
+    eq('one request so far', recentCalls, 1);
+    const focus = () => page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await focus(); await focus(); await focus();
+    await page.waitForTimeout(800);
+    eq('refocusing retries once, not every time', recentCalls, 2);
+    await page.waitForTimeout(21000);
+    eq('no timer retries while signed out', recentCalls, 2);
+    signedIn = true;
+    await focus();
+    await page.waitForTimeout(1200);
+    eq('focus after signing in retries', recentCalls, 3);
+    eq('button gone, no reload needed', await q('.status .signin').count(), 0);
+    check('status back to normal', /in Recently Met/.test(await q('.status').textContent()), await q('.status').textContent());
+    await page.waitForTimeout(21000);
+    check('normal polling resumed', recentCalls >= 4, 'calls ' + recentCalls);
+    eq('no page errors when signed out', errors.filter(e => !/status of 401/.test(e)), []);   // Chrome logs the 401 itself
+    await ctx.close();
+  }
+
+  // ----- signed out of sotrep.com -----
+  {
+    const st = demo.store();
+    delete st.cache['Player Five']; delete st.cache['Player Six'];
+    const { ctx, page, q, errors } = await fresh(browser, st, 'dark', { initScript: 'window.__searchStatus = 401;' });
+    const searches = () => page.evaluate(() => __calls.filter(u => u.includes('/api/search')).length);
+    const btn = q('.status .signin');
+    await page.waitForTimeout(1500);
+    eq('one Sign in button for sotrep', await btn.count(), 1);
+    eq('sotrep button text and link', [(await btn.textContent()).trim(), await btn.getAttribute('href'), await btn.getAttribute('target')], ['Sign in to sotrep.com', 'https://www.sotrep.com', '_blank']);
+    eq('only one probe request, queue held', await searches(), 1);
+    await page.waitForTimeout(21000);
+    eq('no retries on a timer', await searches(), 1);
+    check('status still names the button after a poll', await btn.count() === 1, 'button lost');
+    await page.evaluate(() => { window.__searchStatus = 200; window.dispatchEvent(new Event('focus')); });
+    await page.waitForTimeout(1500);
+    eq('button gone once a lookup succeeds', await q('.status .signin').count(), 0);
+    await page.waitForTimeout(3500);
+    check('queue resumed', (await searches()) >= 3, 'searches ' + (await searches()));
+    eq('no page errors when signed out of sotrep', errors, []);
+    await ctx.close();
   }
 
   await browser.close();
