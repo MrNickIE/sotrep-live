@@ -67,19 +67,23 @@ const gmStubs = (initial = store()) => `
     else if (o.url.includes('twitch.tv')) text = '';
     else if (o.url.includes('xbl-info')) text = JSON.stringify({ is_playing: true, presence_text: 'Sea of Thieves' });
     else if (o.url.includes('/api/search')) text = JSON.stringify({ error: 'not found' });
-    o.onload && o.onload({ status: 200, responseText: text, responseHeaders: '' });
+    o.onload && o.onload({ status: o.url.includes('/api/search') ? (window.__searchStatus || 200) : 200, responseText: text, responseHeaders: '' });
   }, 50); };
 `;
 
 // Opens the friends page with the script loaded. Returns a locator helper for things inside the shadow root.
-async function open(page, initial) {
+async function open(page, initial, opts = {}) {
   await page.route('**/*', (route) => {
     const url = route.request().url();
-    if (url.includes('/api/users/get-recent-friends')) return route.fulfill({ contentType: 'application/json', body: JSON.stringify(list) });
+    if (url.includes('/api/users/get-recent-friends')) {
+      if (opts.recent) { const r = opts.recent(); if (r) return route.fulfill({ contentType: 'application/json', ...r }); }
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify(list) });
+    }
     if (url.startsWith('https://www.seaofthieves.com/friends')) return route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><script>var cfg={"r-gtg":"Me"}</script></head><body></body></html>' });
     return route.abort();
   });
   await page.addInitScript(gmStubs(initial));
+  if (opts.initScript) await page.addInitScript(opts.initScript);
   await page.goto('https://www.seaofthieves.com/friends');
   await page.addScriptTag({ content: script });
   return (sel) => page.locator('#sotrep-live-host').locator(sel);
