@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      1.0.6
+// @version      1.0.7
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js
@@ -114,6 +114,7 @@
     liveBusy: false,
     signedOut: false,       // seaofthieves.com said 401/403: polling is parked until you come back to this tab
     sotrepSignedOut: false, // sotrep.com said 401: lookups are parked until you come back to this tab
+    pauseFix: false,        // the current sotrep pause is one you can clear yourself on sotrep.com (captcha, finish sign-up)
     sotrepTry: false,       // one lookup is allowed through to find out whether you have signed in
   };
   const LIVE_TTL_MS = 5 * 60e3;       // how long a Twitch live/offline answer is trusted
@@ -711,6 +712,9 @@
   // ---------- what's new ----------
   // One short list per release, shown once after an update. A fresh install sees nothing: it has nothing to compare to.
   const WHATS_NEW = {
+    '1.0.7': [
+      'When sotrep.com wants a captcha or a finished sign-up, the status line now has an Open sotrep.com button. Do it there, come back to this tab and lookups carry on.',
+    ],
     '1.0.6': [
       'Signed out of seaofthieves.com or sotrep.com? The status line now has a Sign in button that opens the right page in a new tab. Come back to this tab and it picks up where it left off, no reload needed.',
       'While signed out it stops retrying on a timer, so it asks each site far less often than before.',
@@ -917,6 +921,7 @@
     showNews();
   }
 
+  const fixing = () => session.pauseFix && session.pauseUntil && Date.now() < session.pauseUntil;
   const SIGNIN_LOGIN = 'https://www.seaofthieves.com/login';
   function setStatus(txt, err) {
     // a Sign in button for each site that has said we are signed out; they open the page in a new tab
@@ -924,6 +929,7 @@
     const btns = [];
     if (session.signedOut) btns.push(signin('Sign in to seaofthieves.com', SIGNIN_LOGIN));
     if (session.sotrepSignedOut) btns.push(signin('Sign in to sotrep.com', SOTREP));
+    else if (fixing()) btns.push(signin('Open sotrep.com', SOTREP));
     statusEl.replaceChildren(h('span', { class: 'dot' + (err || btns.length ? ' err' : '') }), txt, ...btns.flatMap(b => [' ', b]));
   }
   function statusLine() {
@@ -932,7 +938,8 @@
     const every = Math.round((typeof nextPollDelay === 'function' ? nextPollDelay() : POLL_SECONDS * 1000) / 1000);
     const cadence = every > POLL_SECONDS ? ` · quiet, checking every ${every >= 120 ? Math.round(every / 60) + ' min' : every + ' s'}` : '';
     const parked = session.sotrepSignedOut ? ' · lookups paused, not signed in to sotrep.com' : '';
-    return `${session.count} in Recently Met · checked ${t}${q}${cadence}${parked}`;
+    const fix = fixing() ? ' · lookups paused, sotrep.com needs a quick check' : '';
+    return `${session.count} in Recently Met · checked ${t}${q}${cadence}${parked}${fix}`;
   }
 
   function repClass(rep) {
@@ -1227,11 +1234,12 @@
   const SIGNIN_RETRY_GAP_MS = 15000;
   let lastSigninRetry = 0;
   function retryAfterSignIn() {
-    if (document.hidden || (!session.signedOut && !session.sotrepSignedOut)) return;
+    if (document.hidden || (!session.signedOut && !session.sotrepSignedOut && !fixing())) return;
     if (Date.now() - lastSigninRetry < SIGNIN_RETRY_GAP_MS) return;
     lastSigninRetry = Date.now();
     if (session.signedOut) { clearTimeout(pollTimer); poll(); }
     if (session.sotrepSignedOut) { session.sotrepTry = true; pump(); }
+    if (fixing()) { session.pauseUntil = 0; session.pauseFix = false; setStatus(statusLine()); }   // pump's wait loop then makes one lookup; a repeat refusal pauses again
   }
   window.addEventListener('focus', retryAfterSignIn);
   document.addEventListener('visibilitychange', retryAfterSignIn);
@@ -1353,8 +1361,8 @@
           if (session.sotrepSignedOut && res.status >= 200 && res.status < 300) { session.sotrepSignedOut = false; if (session.lastPoll) setStatus(statusLine()); }
           if (res.status === 403) {
             let d = {}; try { d = JSON.parse(res.responseText) || {}; } catch (e) {}
-            if (d.require_captcha) return resolve({ error: 'sotrep.com wants a captcha: open sotrep.com, search any name there, then retry', pause: 300 });
-            if (d.error === 'username_requirements_not_met') return resolve({ error: 'sotrep.com needs your account set up: open sotrep.com and finish sign-up', pause: 300 });
+            if (d.require_captcha) return resolve({ error: 'sotrep.com wants a captcha: open sotrep.com, search any name there, then retry', pause: 300, fix: true });
+            if (d.error === 'username_requirements_not_met') return resolve({ error: 'sotrep.com needs your account set up: open sotrep.com and finish sign-up', pause: 300, fix: true });
             return resolve({ error: `sotrep.com rate limit, paused ${waitTxt}`, pause: wait });
           }
           if (res.status === 429) return resolve({ error: `sotrep.com rate limit, paused ${waitTxt}`, pause: wait });
@@ -1411,6 +1419,7 @@
       if (rep.pause) {
         session.pauseUntil = Date.now() + rep.pause * 1000;
         session.pauseReason = rep.error;
+        session.pauseFix = !!rep.fix;
         session.queue.unshift(gt);        // put it back; it was not the player's fault
         render();
         continue;

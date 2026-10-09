@@ -230,6 +230,26 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await ctx.close();
   }
 
+  // ----- sotrep.com wants a captcha -----
+  {
+    const st = demo.store();
+    delete st.cache['Player Five']; delete st.cache['Player Six'];
+    const { ctx, page, q, errors } = await fresh(browser, st, 'dark', { initScript: "window.__searchStatus = 403; window.__searchBody = '{\"require_captcha\":true}';" });
+    const searches = () => page.evaluate(() => __calls.filter(u => u.includes('/api/search')).length);
+    const btn = q('.status .signin');
+    await page.waitForTimeout(1500);
+    eq('captcha: Open sotrep.com button', [(await btn.textContent()).trim(), await btn.getAttribute('href'), await btn.getAttribute('target')], ['Open sotrep.com', 'https://www.sotrep.com', '_blank']);
+    check('captcha: status explains', /captcha/.test(await q('.status').textContent()), await q('.status').textContent());
+    eq('captcha: one request, then paused', await searches(), 1);
+    await page.evaluate(() => { window.__searchStatus = 200; window.__searchBody = ''; window.dispatchEvent(new Event('focus')); });
+    await page.waitForTimeout(500);
+    eq('captcha: button goes on return', await q('.status .signin').count(), 0);
+    await page.waitForTimeout(17000);
+    check('captcha: lookups resume after return', (await searches()) >= 2, 'searches ' + (await searches()));
+    eq('no page errors on captcha', errors.filter(e => !/status of 403/.test(e)), []);
+    await ctx.close();
+  }
+
   await browser.close();
   console.log(failed ? `\n${failed} check(s) failed` : '\nAll checks passed');
   process.exit(failed ? 1 : 0);

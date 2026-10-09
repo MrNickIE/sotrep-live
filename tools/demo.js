@@ -66,7 +66,7 @@ const gmStubs = (initial = store()) => `
     else if (o.url.includes('twitch.tv/playertwo')) text = '"isLiveBroadcast":true <meta property="og:description" content="Demo stream">';
     else if (o.url.includes('twitch.tv')) text = '';
     else if (o.url.includes('xbl-info')) text = JSON.stringify({ is_playing: true, presence_text: 'Sea of Thieves' });
-    else if (o.url.includes('/api/search')) text = JSON.stringify({ error: 'not found' });
+    else if (o.url.includes('/api/search')) text = window.__searchBody || JSON.stringify({ error: 'not found' });
     o.onload && o.onload({ status: o.url.includes('/api/search') ? (window.__searchStatus || 200) : 200, responseText: text, responseHeaders: '' });
   }, 50); };
 `;
