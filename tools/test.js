@@ -89,6 +89,26 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     check('switching tab closes settings', !(await q('.panel').isVisible()), 'still open');
     eq('button label restored', (await q('button[title="Settings"]').textContent()).trim(), 'Settings');
 
+    // Twitch hiccups: an error or a non-200 keeps LIVE, one clean "offline" keeps it, a second clears it to "was live"
+    await page.evaluate(() => {
+      const real = window.GM_xmlhttpRequest;
+      window.__skew = 0; window.__tw = '';
+      const now = Date.now.bind(Date); Date.now = () => now() + window.__skew;
+      window.GM_xmlhttpRequest = (o) => {
+        if (!o.url.includes('twitch.tv/playertwo') || !window.__tw) return real(o);
+        window.__calls.push(o.url);
+        setTimeout(() => o.onload({ status: window.__tw === 'err' ? 503 : 200, responseText: window.__tw === 'off' ? '<html></html>' : '', responseHeaders: '' }), 20);
+      };
+    });
+    const cycle = async (mode) => { await page.evaluate((m) => { window.__tw = m; window.__skew += 6 * 60e3; }, mode); await page.waitForTimeout(24000); };
+    await cycle('err');
+    eq('Twitch 503 keeps LIVE', await q('.row .tag.live').count(), 1);
+    await cycle('off');
+    eq('one offline answer keeps LIVE', await q('.row .tag.live').count(), 1);
+    await cycle('off');
+    eq('second offline answer clears LIVE', await q('.row .tag.live').count(), 0);
+    check('was live tag links to channel', /^was live \d\d:\d\d$/.test((await q('.row .tag.wasLive').first().textContent()).trim()) && (await q('.row .tag.wasLive').first().getAttribute('href')).includes('twitch.tv/playertwo'), 'tag missing');
+
     // request budget: nothing but the expected hosts
     const calls = await page.evaluate(() => __calls);
     const odd = calls.filter(u => !/sotrep\.com\/api\/(player\/[^/]+\/xbl-info|search)|twitch\.tv\/|raw\.githubusercontent\.com/.test(u));

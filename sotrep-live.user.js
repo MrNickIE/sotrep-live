@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      1.0.7
+// @version      1.0.8
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js
@@ -247,6 +247,8 @@
     .tag.red{background:var(--c-redbg);color:var(--c-red)}
     .tag.live{background:#9146ff;color:#fff;font-weight:600;text-decoration:none}
     .tag.live:hover{background:#a970ff}
+    .tag.wasLive{text-decoration:none}
+    .tag.wasLive:hover{color:var(--c-fg)}
     .social{font-size:11px;color:var(--c-mute);white-space:nowrap;display:inline-flex;gap:8px;align-items:center}
     .soc{display:inline-flex;align-items:center;gap:4px;color:var(--c-mute);text-decoration:none}
     a.soc{color:var(--c-fg3)}
@@ -542,6 +544,8 @@
           let title = '';
           const m = html.match(/<meta\s+(?:name|property)="(?:og:)?description"\s+content="([^"]{0,200})"/i);
           if (m) title = m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+          // a non-200 page (rate limit, outage) says nothing about whether they are live
+          if (r.status !== 200) { resolve({ live: false, error: `HTTP ${r.status}`, status: r.status }); return; }
           resolve({ live, title, status: r.status });
         },
         onerror: () => resolve({ live: false, error: 'unreachable' }),
@@ -563,8 +567,21 @@
       const { gt, login } = session.liveQueue.shift();
       const prev = liveEntry(login);
       const r = await fetchTwitchLive(login);
-      session.live.set(login, { at: Date.now(), live: r.live, title: r.title || '', url: `https://www.twitch.tv/${login}`, error: r.error });
-      if (r.live && gt) { state.lives[gt] = new Date().toISOString(); save(['lives']); }   // so the session card can say who was live
+      const url = `https://www.twitch.tv/${login}`;
+      let nowLive = r.live;
+      if (r.error) {
+        // a failed check changes nothing: keep what we knew and just bump the time so it retries next cycle
+        session.live.set(login, prev ? { ...prev, at: Date.now() } : { at: Date.now(), live: false, title: '', url, error: r.error });
+        nowLive = false;
+      } else if (r.live) {
+        session.live.set(login, { at: Date.now(), live: true, title: r.title || '', url, misses: 0, wasLiveAt: Date.now() });
+      } else if (prev && prev.live && (prev.misses | 0) < 1) {
+        // first clean "not live" after LIVE: hold the pill, only a second one in a row clears it
+        session.live.set(login, { ...prev, at: Date.now(), misses: (prev.misses | 0) + 1 });
+      } else {
+        session.live.set(login, { at: Date.now(), live: false, title: '', url, misses: 0, wasLiveAt: prev && prev.wasLiveAt });
+      }
+      if (nowLive && gt) { state.lives[gt] = new Date().toISOString(); save(['lives']); }   // so the session card can say who was live
       render();
       // alert on the transition to live (or the first time we see them live), not on every re-check
       if (r.live && !(prev && prev.live) && session.order.includes(gt) && !session.manual.has(gt)) fireStreamerAlert(gt, login, r.title);
@@ -712,6 +729,10 @@
   // ---------- what's new ----------
   // One short list per release, shown once after an update. A fresh install sees nothing: it has nothing to compare to.
   const WHATS_NEW = {
+    '1.0.8': [
+      'The LIVE on Twitch pill no longer flickers off when Twitch hiccups. It only goes after two clear "not live" answers in a row, and a failed check changes nothing.',
+      'Someone who was live earlier in the session now shows a grey "was live" time that links to their channel.',
+    ],
     '1.0.7': [
       'When sotrep.com wants a captcha or a finished sign-up, the status line now has an Open sotrep.com button. Do it there, come back to this tab and lookups carry on.',
     ],
@@ -1134,6 +1155,7 @@
         const login = twitchLogin(rep);
         const lv = liveEntry(login);
         if (login && lv && lv.live) tags.unshift(h('a', { class: 'tag live', href: lv.url, target: '_blank', rel: 'noopener', title: lv.title || 'Live on Twitch' }, 'LIVE on Twitch'));
+        else if (login && lv && lv.wasLiveAt) tags.unshift(h('a', { class: 'tag wasLive', href: lv.url, target: '_blank', rel: 'noopener', title: 'Was live on Twitch earlier this session' }, `was live ${new Date(lv.wasLiveAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`));
         else if (login && !lv && session.liveQueue.some(q => q.login === login)) tags.push(h('span', { class: 'tag' }, 'checking Twitch…'));
         const soc = (rep.socials || []).filter(s => s && !s.hidden && s.platform && s.platform !== 'playfab');
         soc.forEach((s) => {
