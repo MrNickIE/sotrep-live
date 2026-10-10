@@ -237,6 +237,20 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await ctx.close();
   }
 
+  // ----- both buttons stay visible on a narrow window -----
+  {
+    const st = { ...demo.store(), me: null };   // the first sotrep request is our own gamertag, and it gets a 401
+    const { ctx, page, q } = await fresh(browser, st, 'dark', { recent: () => ({ status: 401, body: '{}' }), initScript: 'window.__searchStatus = 401;' });
+    await page.setViewportSize({ width: 420, height: 700 });
+    await page.waitForTimeout(4500);
+    const r = await q('.status').evaluate((st) => {
+      const s = st.getBoundingClientRect();
+      return [...st.querySelectorAll('.signin')].map(e => { const b = e.getBoundingClientRect(); return b.width > 20 && b.left >= s.left - 1 && b.right <= s.right + 1 && b.bottom <= s.bottom + 1; });
+    });
+    eq('both Sign in buttons fully visible on a narrow window', r, [true, true]);
+    await ctx.close();
+  }
+
   // ----- a refresh keeps the whole session -----
   {
     const t = (m) => new Date(Date.now() - m * 60e3).toISOString();
@@ -252,7 +266,7 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
   }
 
   // ----- signed out of sotrep.com with nothing queued -----
-  for (const [label, status, body, want] of [['200', 200, '', null], ['captcha 403', 403, '{"require_captcha":true}', 'Open sotrep.com']]) {
+  for (const [label, status, body, want] of [['200', 200, JSON.stringify({ gamertag: 'Me', xuid: '42' }), null], ['captcha 403', 403, '{"require_captcha":true}', 'Open sotrep.com']]) {
     const st = { ...demo.store(), me: null };   // no stored Xbox ID, so the first sotrep request is our own gamertag
     const { ctx, page, q } = await fresh(browser, st, 'dark', { initScript: 'window.__searchStatus = 401;' });
     await page.waitForTimeout(4500);
@@ -261,6 +275,7 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await page.waitForTimeout(1200);
     const btns = await q('.status .signin').allTextContents();
     eq(`empty queue (${label}): recovery probe clears the sign-in button`, btns.map(x => x.trim()), want ? [want] : []);
+    if (!want) eq('empty queue (200): probe keeps the Xbox ID so the presence check does not search again', await page.evaluate(() => __store.me), { gt: 'Me', xuid: '42' });
     await ctx.close();
   }
 
