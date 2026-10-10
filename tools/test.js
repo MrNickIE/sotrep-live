@@ -214,7 +214,7 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await page.waitForTimeout(800);
     eq('refocusing retries once, not every time', recentCalls, 2);
     await page.waitForTimeout(21000);
-    eq('no timer retries while signed out', recentCalls, 2);
+    eq('no fast retries while signed out (the 5 minute fallback has not fired)', recentCalls, 2);
     signedIn = true;
     await focus();
     await page.waitForTimeout(1200);
@@ -224,6 +224,43 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await page.waitForTimeout(21000);
     check('normal polling resumed', recentCalls >= 4, 'calls ' + recentCalls);
     eq('no page errors when signed out', errors.filter(e => !/status of 401/.test(e)), []);   // Chrome logs the 401 itself
+    await ctx.close();
+  }
+
+  // ----- the button stays visible on a narrow window -----
+  {
+    const { ctx, page, q } = await fresh(browser, demo.store(), 'dark', { recent: () => ({ status: 401, body: '{}' }) });
+    await page.setViewportSize({ width: 420, height: 700 });
+    await page.waitForTimeout(400);
+    const fits = await q('.status').evaluate((st) => { const b = st.querySelector('.signin').getBoundingClientRect(), s = st.getBoundingClientRect(); return b.width > 20 && b.left >= s.left - 1 && b.right <= s.right + 1; });
+    check('Sign in button not clipped on a narrow window', fits, 'clipped');
+    await ctx.close();
+  }
+
+  // ----- a refresh keeps the whole session -----
+  {
+    const t = (m) => new Date(Date.now() - m * 60e3).toISOString();
+    const six = ['Player One', 'Player Two', 'Player Three', 'Player Four', 'Player Five', 'Player Six'];
+    const withTimes = (mins) => { const st = demo.store(); six.forEach((gt, i) => { st.seen[gt] = t(mins[i]); }); return st; };
+    // gaps: 5 -> 40 -> 100 are all under 90 minutes apart, 100 -> 300 is not, the rest are long ago
+    const a = await fresh(browser, withTimes([5, 40, 100, 300, 1000, 1100]));
+    eq('session kept across gaps under 90 minutes, older session left out', await a.q('.list .row').count(), 3);
+    await a.ctx.close();
+    const b = await fresh(browser, withTimes([200, 250, 300, 400, 1000, 1100]));
+    eq('a new evening starts with an empty board', await b.q('.list .row').count(), 0);
+    await b.ctx.close();
+  }
+
+  // ----- signed out of sotrep.com with nothing queued -----
+  for (const [label, status, body, want] of [['200', 200, '', null], ['captcha 403', 403, '{"require_captcha":true}', 'Open sotrep.com']]) {
+    const st = { ...demo.store(), me: null };   // no stored Xbox ID, so the first sotrep request is our own gamertag
+    const { ctx, page, q } = await fresh(browser, st, 'dark', { initScript: 'window.__searchStatus = 401;' });
+    await page.waitForTimeout(4500);
+    eq(`empty queue (${label}): signed-out button shown`, (await q('.status .signin').textContent()).trim(), 'Sign in to sotrep.com');
+    await page.evaluate(([s, b]) => { window.__searchStatus = s; window.__searchBody = b; window.dispatchEvent(new Event('focus')); }, [status, body]);
+    await page.waitForTimeout(1200);
+    const btns = await q('.status .signin').allTextContents();
+    eq(`empty queue (${label}): recovery probe clears the sign-in button`, btns.map(x => x.trim()), want ? [want] : []);
     await ctx.close();
   }
 

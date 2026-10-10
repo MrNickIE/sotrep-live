@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      1.0.8
+// @version      1.0.9
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js
@@ -28,7 +28,7 @@
   - Any gamertag not seen before is a new encounter. It is looked up on sotrep.com via POST /api/search
     (again your own login) and shown at the top of the board with a colour-coded reputation.
   - Everything is cached locally so a player is only looked up once per CACHE_HOURS.
-  - Players first seen in the last RECENT_WINDOW_MIN minutes (20) stay on the board across a page refresh.
+  - Players from the current session (no gap over SESSION_GAP_MS, 90 minutes) stay on the board across a page refresh.
   - History view lists every name ever recorded, newest first, with a per-row "Look up" button for anyone
     not yet checked. There is deliberately no bulk lookup, to stay gentle on sotrep.com.
   - Reset needs two presses: the first arms the button for a few seconds, the second fires.
@@ -45,7 +45,9 @@
   const POLL_SECONDS = 20;        // how often to re-read Recently Met
   const CACHE_HOURS = 24;         // how long a SOTREP lookup is trusted before re-checking
   const LOOKUP_GAP_MS = 3000;     // pause between SOTREP lookups so we never hammer the site (their rate limiter bites below this)
-  const RECENT_WINDOW_MIN = 20;   // players first seen within this window survive a refresh
+  const SESSION_GAP_MS = 90 * 60e3;   // a run of meetings with no gap over this is one session; a refresh keeps the whole session on the board
+  const RECENT_MAX = 100;             // most players restored to the board after a refresh
+  const SIGNIN_FALLBACK_MS = 5 * 60e3; // signed out of seaofthieves.com: slowest safety-net retry for a tab that never loses focus
   const SOTREP = 'https://www.sotrep.com';
   const RECENT_URL = '/api/users/get-recent-friends';
 
@@ -112,7 +114,7 @@
     live: new Map(),    // twitch login -> { at, live, title, url }
     liveQueue: [],
     liveBusy: false,
-    signedOut: false,       // seaofthieves.com said 401/403: polling is parked until you come back to this tab
+    signedOut: false,       // seaofthieves.com said 401/403: no fast polling; retries on return to the tab, or every SIGNIN_FALLBACK_MS
     sotrepSignedOut: false, // sotrep.com said 401: lookups are parked until you come back to this tab
     pauseFix: false,        // the current sotrep pause is one you can clear yourself on sotrep.com (captcha, finish sign-up)
     sotrepTry: false,       // one lookup is allowed through to find out whether you have signed in
@@ -120,14 +122,21 @@
   const LIVE_TTL_MS = 5 * 60e3;       // how long a Twitch live/offline answer is trusted
   const LIVE_GAP_MS = 2000;           // pause between Twitch page checks
 
-  // Restore anyone first seen recently so a refresh does not wipe the board mid-session.
+  // Restore the whole current session so a refresh does not wipe the board mid-session: newest first, back
+  // until a gap over SESSION_GAP_MS. If the newest is itself older than that, a new session starts empty.
   // Baseline names (everyone present on the very first poll) are never "recent", whatever their stamp.
   function restoreRecent() {
-    const cutoff = Date.now() - RECENT_WINDOW_MIN * 60e3;
-    session.order = Object.entries(state.seen)
-      .filter(([, iso]) => iso !== state.baselineAt && Date.parse(iso) >= cutoff)
-      .sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]))
-      .map(([gt]) => gt);
+    const all = Object.entries(state.seen)
+      .filter(([, iso]) => iso !== state.baselineAt && Date.parse(iso) > 0)
+      .sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]));
+    const keep = [];
+    let prev = Date.now();
+    for (const [gt, iso] of all) {
+      const t = Date.parse(iso);
+      if (prev - t > SESSION_GAP_MS || keep.length >= RECENT_MAX) break;
+      keep.push(gt); prev = t;
+    }
+    session.order = keep;
   }
   restoreRecent();
 
@@ -164,8 +173,10 @@
     .ver{margin-left:8px;font-size:11px;font-weight:500;color:var(--c-mute2);text-decoration:none;padding:1px 6px;border-radius:999px;border:1px solid var(--c-l2);vertical-align:middle}
     .ver:hover{color:var(--c-fg);border-color:var(--c-l3)}
     .ver.stale{color:var(--c-amb);border-color:var(--c-ambbd);background:var(--c-ambbg)}
-    .status{color:var(--c-mute);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1 1 200px}
-    .status .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#2f9e63;margin-right:6px;vertical-align:middle}
+    .status{color:var(--c-mute);font-size:12px;white-space:nowrap;overflow:hidden;min-width:0;flex:1 1 200px;display:flex;align-items:center;gap:6px}
+    .status .stxt{min-width:0;overflow:hidden;text-overflow:ellipsis}
+    .status .signin{flex:none}
+    .status .dot{flex:none;width:6px;height:6px;border-radius:50%;background:#2f9e63}
     .status .dot.err{background:#d6453d}
     .me{font-size:11.5px;line-height:20px;padding:0 8px;border-radius:999px;border:1px solid var(--c-l2);color:var(--c-mute);white-space:nowrap;cursor:help}
     .me.ok{color:var(--c-ok);border-color:var(--c-grnbd);background:var(--c-grnbg)}
@@ -185,7 +196,7 @@
     .tab:hover{color:var(--c-fg)}
     .tab.on{background:var(--c-bg4);color:var(--c-fgs)}
     .mini{all:unset;cursor:pointer;font-size:11px;line-height:18px;height:18px;padding:0 8px;border-radius:4px;border:1px solid var(--c-l2);color:var(--c-fg4)}
-    a.mini{display:inline-block;text-decoration:none;margin-left:6px;vertical-align:middle}
+    a.mini{display:inline-block;text-decoration:none;vertical-align:middle}
     .mini:hover{background:var(--c-bg4);color:#fff}
     .row.unchecked{opacity:.75}
     .section.fold{cursor:pointer;margin-top:18px;user-select:none}
@@ -729,6 +740,11 @@
   // ---------- what's new ----------
   // One short list per release, shown once after an update. A fresh install sees nothing: it has nothing to compare to.
   const WHATS_NEW = {
+    '1.0.9': [
+      'A refresh now keeps your whole session on the Recent board, not just the last 20 minutes. A new session starts after 90 minutes with no new meetings.',
+      'Signed out of seaofthieves.com: it also retries every 5 minutes, so a board left on a second screen recovers without a reload.',
+      'The Sign in buttons can no longer be hidden on a narrow window, and signing back in to sotrep.com is picked up even when no lookups are waiting.',
+    ],
     '1.0.8': [
       'The LIVE on Twitch pill no longer flickers off when Twitch hiccups. It only goes after two clear "not live" answers in a row, and a failed check changes nothing.',
       'Someone who was live earlier in the session now shows a grey "was live" time that links to their channel.',
@@ -951,7 +967,7 @@
     if (session.signedOut) btns.push(signin('Sign in to seaofthieves.com', SIGNIN_LOGIN));
     if (session.sotrepSignedOut) btns.push(signin('Sign in to sotrep.com', SOTREP));
     else if (fixing()) btns.push(signin('Open sotrep.com', SOTREP));
-    statusEl.replaceChildren(h('span', { class: 'dot' + (err || btns.length ? ' err' : '') }), txt, ...btns.flatMap(b => [' ', b]));
+    statusEl.replaceChildren(h('span', { class: 'dot' + (err || btns.length ? ' err' : '') }), h('span', { class: 'stxt', title: txt }, txt), ...btns);
   }
   function statusLine() {
     const t = session.lastPoll ? session.lastPoll.toLocaleTimeString('en-GB') : '…';
@@ -1021,7 +1037,6 @@
 
   // ---------- session recap ----------
   // A session is a run of meetings with no gap over 90 minutes, ending at the latest one. Built from the meeting log.
-  const SESSION_GAP_MS = 90 * 60e3;
   const flagScore = (rep) => ((rep.severe_count | 0) + (rep.banned_xuids || []).length) * 100 + (rep.moderate_count | 0) * 10 + (rep.light_count | 0);
   function sessionRecap() {
     const hits = [];
@@ -1255,12 +1270,24 @@
   // at most one per SIGNIN_RETRY_GAP_MS however often the tab flaps, and a failed retry just parks again.
   const SIGNIN_RETRY_GAP_MS = 15000;
   let lastSigninRetry = 0;
+  // One request to find out whether you have signed back in to sotrep.com. With lookups waiting, the first of them is
+  // the probe; with none waiting, one search for your own gamertag does it (the reply clears the flag or sets a pause).
+  async function probeSotrep() {
+    if (session.queue.length) { session.sotrepTry = true; pump(); return; }
+    const gt = (state.me && state.me.gt) || myGamertag();
+    if (!gt) return;
+    const rep = await sotrepSearchAs(gt, 'xbox');
+    if (rep.pause) {
+      session.pauseUntil = Date.now() + rep.pause * 1000; session.pauseReason = rep.error; session.pauseFix = !!rep.fix;
+      setStatus(statusLine(), true);
+    }
+  }
   function retryAfterSignIn() {
     if (document.hidden || (!session.signedOut && !session.sotrepSignedOut && !fixing())) return;
     if (Date.now() - lastSigninRetry < SIGNIN_RETRY_GAP_MS) return;
     lastSigninRetry = Date.now();
     if (session.signedOut) { clearTimeout(pollTimer); poll(); }
-    if (session.sotrepSignedOut) { session.sotrepTry = true; pump(); }
+    if (session.sotrepSignedOut) probeSotrep();
     if (fixing()) { session.pauseUntil = 0; session.pauseFix = false; setStatus(statusLine()); }   // pump's wait loop then makes one lookup; a repeat refusal pauses again
   }
   window.addEventListener('focus', retryAfterSignIn);
@@ -1340,12 +1367,13 @@
       const sig = list.map(p => p && `${p.Gamertag}|${p.IsOnline ? 1 : 0}${p.IsPlayingSot ? 1 : 0}|${p.DisplayPicUrl || ''}`).join('\n');
       if (sig !== session.listSig || fresh.length) { session.listSig = sig; render(); }
     } catch (e) {
-      session.signedOut = !!(e && e.signedOut);
-      setStatus(session.signedOut ? e.message : 'Problem: ' + (e.message || String(e)), true);
+      if (e && e.signedOut) session.signedOut = true;   // only a good reply clears it, not some other error
+      setStatus(e && e.signedOut ? e.message : 'Problem: ' + (e.message || String(e)), true);
       if (e && e.backoff) delay = e.backoff * 1000;
     }
     pollInFlight = false;
-    if (!session.signedOut) schedulePoll(delay || nextPollDelay());   // signed out: parked until retryAfterSignIn
+    // signed out: no fast polling. Returning to the tab retries (retryAfterSignIn); this slow timer covers a tab that never loses focus
+    schedulePoll(delay || (session.signedOut ? SIGNIN_FALLBACK_MS : nextPollDelay()));
   }
 
   // ---------- data: SOTREP ----------
@@ -1380,7 +1408,8 @@
           const wait = ra ? Math.min(Math.max(parseInt(ra, 10), 30), 900) : 60;
           const waitTxt = wait >= 120 ? `${Math.round(wait / 60)} minutes` : `${wait} seconds`;
           if (res.status === 401) { session.sotrepSignedOut = true; return resolve({ error: 'sign in to sotrep.com', signin: true }); }
-          if (session.sotrepSignedOut && res.status >= 200 && res.status < 300) { session.sotrepSignedOut = false; if (session.lastPoll) setStatus(statusLine()); }
+          // any answer but 401 or a server error means we are signed in (a 403 or 429 is a different pause)
+          if (session.sotrepSignedOut && res.status < 500) { session.sotrepSignedOut = false; if (session.lastPoll) setStatus(statusLine()); }
           if (res.status === 403) {
             let d = {}; try { d = JSON.parse(res.responseText) || {}; } catch (e) {}
             if (d.require_captcha) return resolve({ error: 'sotrep.com wants a captcha: open sotrep.com, search any name there, then retry', pause: 300, fix: true });
