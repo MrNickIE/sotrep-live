@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      1.0.9
+// @version      1.0.10
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js
@@ -173,8 +173,8 @@
     .ver{margin-left:8px;font-size:11px;font-weight:500;color:var(--c-mute2);text-decoration:none;padding:1px 6px;border-radius:999px;border:1px solid var(--c-l2);vertical-align:middle}
     .ver:hover{color:var(--c-fg);border-color:var(--c-l3)}
     .ver.stale{color:var(--c-amb);border-color:var(--c-ambbd);background:var(--c-ambbg)}
-    .status{color:var(--c-mute);font-size:12px;white-space:nowrap;overflow:hidden;min-width:0;flex:1 1 200px;display:flex;align-items:center;gap:6px}
-    .status .stxt{min-width:0;overflow:hidden;text-overflow:ellipsis}
+    .status{color:var(--c-mute);font-size:12px;white-space:nowrap;overflow:hidden;min-width:0;flex:1 1 200px;display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px}
+    .status .stxt{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis}
     .status .signin{flex:none}
     .status .dot{flex:none;width:6px;height:6px;border-radius:50%;background:#2f9e63}
     .status .dot.err{background:#d6453d}
@@ -740,6 +740,10 @@
   // ---------- what's new ----------
   // One short list per release, shown once after an update. A fresh install sees nothing: it has nothing to compare to.
   const WHATS_NEW = {
+    '1.0.10': [
+      'Signed out of both sites on a narrow window? Both Sign in buttons now stay visible (the status line wraps).',
+      'One fewer request to sotrep.com after you sign back in there.',
+    ],
     '1.0.9': [
       'A refresh now keeps your whole session on the Recent board, not just the last 20 minutes. A new session starts after 90 minutes with no new meetings.',
       'Signed out of seaofthieves.com: it also retries every 5 minutes, so a board left on a second screen recovers without a reload.',
@@ -960,7 +964,16 @@
 
   const fixing = () => session.pauseFix && session.pauseUntil && Date.now() < session.pauseUntil;
   const SIGNIN_LOGIN = 'https://www.seaofthieves.com/login';
+  // Redraw after a sign-in flag changed outside the poll and lookup loops (which set the status themselves).
+  // Signed out of seaofthieves.com keeps its own message; otherwise the normal line, which says if lookups are parked.
+  let lastStatus = ['', false];
+  function refreshStatus() {
+    if (!statusEl) return;
+    if (session.signedOut || !session.lastPoll) setStatus(...lastStatus);
+    else setStatus(statusLine(), !!session.sotrepSignedOut);
+  }
   function setStatus(txt, err) {
+    lastStatus = [txt, err];
     // a Sign in button for each site that has said we are signed out; they open the page in a new tab
     const signin = (label, href) => h('a', { class: 'mini signin', href, target: '_blank', rel: 'noopener' }, label);
     const btns = [];
@@ -1277,6 +1290,8 @@
     const gt = (state.me && state.me.gt) || myGamertag();
     if (!gt) return;
     const rep = await sotrepSearchAs(gt, 'xbox');
+    // keep the Xbox ID it found, so the presence check does not search for you again
+    if (!rep.error && rep.xuid && gt === myGamertag()) { state.me = { gt, xuid: String(rep.xuid) }; save(['me']); }
     if (rep.pause) {
       session.pauseUntil = Date.now() + rep.pause * 1000; session.pauseReason = rep.error; session.pauseFix = !!rep.fix;
       setStatus(statusLine(), true);
@@ -1407,9 +1422,9 @@
           const ra = ((res.responseHeaders || '').match(/retry-after:\s*(\d+)/i) || [])[1];
           const wait = ra ? Math.min(Math.max(parseInt(ra, 10), 30), 900) : 60;
           const waitTxt = wait >= 120 ? `${Math.round(wait / 60)} minutes` : `${wait} seconds`;
-          if (res.status === 401) { session.sotrepSignedOut = true; return resolve({ error: 'sign in to sotrep.com', signin: true }); }
+          if (res.status === 401) { if (!session.sotrepSignedOut) { session.sotrepSignedOut = true; refreshStatus(); } return resolve({ error: 'sign in to sotrep.com', signin: true }); }
           // any answer but 401 or a server error means we are signed in (a 403 or 429 is a different pause)
-          if (session.sotrepSignedOut && res.status < 500) { session.sotrepSignedOut = false; if (session.lastPoll) setStatus(statusLine()); }
+          if (session.sotrepSignedOut && res.status < 500) { session.sotrepSignedOut = false; refreshStatus(); }
           if (res.status === 403) {
             let d = {}; try { d = JSON.parse(res.responseText) || {}; } catch (e) {}
             if (d.require_captcha) return resolve({ error: 'sotrep.com wants a captcha: open sotrep.com, search any name there, then retry', pause: 300, fix: true });
