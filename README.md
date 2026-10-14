@@ -74,7 +74,7 @@ Everything the tool remembers (who you met, lookups, settings) is stored by Tamp
 
 ## Limits
 
-- Rare's list has no timestamps and no direct "met again" signal. The board infers it: the list is capped and rolling, so a name that has dropped off and comes back is treated as meeting them again (back to the top of Recent, alerts apply). Someone you met very recently who is still in the list will not re-trigger; they are already on Recent. Players from before tracking started show as new only once they have dropped off and returned.
+- Rare's list has no timestamps and no direct "met again" signal. It is newest first, but meeting someone again does not move them: they keep the place their first meeting gave them. So the board infers it: the list is capped and rolling, so a name that has dropped off and comes back is treated as meeting them again (back to the top of Recent, alerts apply). Anyone still in the list when you meet them again, however long ago you first met, will not re-trigger. Until your list fills up and names start dropping off, that is everyone you have met before. Players from before tracking started show as new only once they have dropped off and returned.
 - "Online" and "Playing SoT" come from Rare, which gets them from Xbox Live presence, so they only appear when the other player's privacy settings allow it. When Xbox shares nothing the row shows just the time you met them; it never claims someone is offline, since they were on your server when they appeared.
 - "Met 3 times" counts from version 1.0.3 onwards. A player you had met before then starts from the one time the tool remembered.
 - Pictures come from Rare's list; manual lookups get a lettered placeholder unless sotrep.com holds an image.
