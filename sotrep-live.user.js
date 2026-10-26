@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      1.0.10
+// @version      1.0.11
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js
@@ -121,6 +121,7 @@
   };
   const LIVE_TTL_MS = 5 * 60e3;       // how long a Twitch live/offline answer is trusted
   const LIVE_GAP_MS = 2000;           // pause between Twitch page checks
+  const LIVE_FIRST_RECHECK_MS = 60e3; // a first check that says not live (or fails) is trusted only this long, once per streamer
 
   // Restore the whole current session so a refresh does not wipe the board mid-session: newest first, back
   // until a gap over SESSION_GAP_MS. If the newest is itself older than that, a new session starts empty.
@@ -592,6 +593,9 @@
       } else {
         session.live.set(login, { at: Date.now(), live: false, title: '', url, misses: 0, wasLiveAt: prev && prev.wasLiveAt });
       }
+      // Twitch can lag a stream that has just started, and a first answer of "not live" would otherwise stand for
+      // five minutes. So a streamer's first check this session that is not live gets one quick second look.
+      if (!prev && !r.live) session.live.get(login).at = Date.now() - LIVE_TTL_MS + LIVE_FIRST_RECHECK_MS;
       if (nowLive && gt) { state.lives[gt] = new Date().toISOString(); save(['lives']); }   // so the session card can say who was live
       render();
       // alert on the transition to live (or the first time we see them live), not on every re-check
@@ -740,6 +744,9 @@
   // ---------- what's new ----------
   // One short list per release, shown once after an update. A fresh install sees nothing: it has nothing to compare to.
   const WHATS_NEW = {
+    '1.0.11': [
+      'A streamer you have just met shows LIVE much sooner: if the first Twitch check says not live (or fails), it checks once more a minute later instead of waiting five.',
+    ],
     '1.0.10': [
       'Signed out of both sites on a narrow window? Both Sign in buttons now stay visible (the status line wraps).',
       'One fewer request to sotrep.com after you sign back in there.',
