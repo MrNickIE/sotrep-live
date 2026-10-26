@@ -237,6 +237,35 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await ctx.close();
   }
 
+  // ----- a first "not live" from Twitch gets one quick second look -----
+  {
+    const init = `
+      window.__skew = 0; window.__tw = 'off';
+      const now = Date.now.bind(Date); Date.now = () => now() + window.__skew;
+      const real = window.GM_xmlhttpRequest;
+      window.GM_xmlhttpRequest = (o) => {
+        if (!o.url.includes('twitch.tv/playertwo')) return real(o);
+        window.__calls.push(o.url);
+        setTimeout(() => o.onload({ status: 200, responseText: window.__tw === 'live' ? '"isLiveBroadcast":true' : '<html></html>', responseHeaders: '' }), 20);
+      };`;
+    const { ctx, page, q, errors } = await fresh(browser, demo.store(), 'dark', { initScript: init });
+    const tw = () => page.evaluate(() => __calls.filter(u => u.includes('twitch.tv/playertwo')).length);
+    eq('first Twitch check made', await tw(), 1);
+    eq('not live at first', await q('.row .tag.live').count(), 0);
+    await page.evaluate(() => { window.__skew += 30e3; });
+    await page.waitForTimeout(22000);
+    eq('no second check inside a minute', await tw(), 1);
+    await page.evaluate(() => { window.__tw = 'live'; window.__skew += 40e3; });
+    await page.waitForTimeout(22000);
+    eq('second check after a minute', await tw(), 2);
+    eq('LIVE shows on the second look', await q('.row .tag.live').count(), 1);
+    await page.evaluate(() => { window.__tw = 'off'; window.__skew += 90e3; });
+    await page.waitForTimeout(22000);
+    eq('then back to every five minutes', await tw(), 2);
+    eq('no page errors on the Twitch recheck', errors, []);
+    await ctx.close();
+  }
+
   // ----- both buttons stay visible on a narrow window -----
   {
     const st = { ...demo.store(), me: null };   // the first sotrep request is our own gamertag, and it gets a 401
