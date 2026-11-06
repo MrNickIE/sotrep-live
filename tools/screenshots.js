@@ -20,9 +20,12 @@ const OUT = path.join(demo.ROOT, 'images');
     document.getElementById('sotrep-live-host').shadowRoot.append(s);
   });
   const fit = async (sel = '.list', pad = -16) => ({ x: 0, y: 0, width: 1280, height: Math.min(page.viewportSize().height, Math.ceil(await shadow(sel).evaluate(e => e.getBoundingClientRect().bottom)) + pad) });
+  await shadow('.row:has-text("Player One") .react-btn').click();   // the reactions panel on the worst player
+  await page.waitForTimeout(300);
   await page.screenshot({ path: path.join(OUT, 'board.png'), clip: await fit() });
+  await shadow('.row:has-text("Player One") .react-btn').click();
 
-  await page.setViewportSize({ width: 1280, height: 1000 });   // the settings panel is tall
+  await page.setViewportSize({ width: 1280, height: 1120 });   // the settings panel is tall
   await shadow('button[title="Settings"]').click();
   await page.waitForTimeout(300);
   await page.screenshot({ path: path.join(OUT, 'settings.png'), clip: await fit('.panel', 0) });

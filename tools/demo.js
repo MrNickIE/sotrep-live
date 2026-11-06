@@ -14,7 +14,7 @@ const twitch = (u) => ({ platform: 'twitch', username: u, link: `https://www.twi
 
 // [gamertag, minutes ago, presence, sotrep reply]
 const recent = [
-  ['Player One', 1, 'sot', { severe_count: 2, moderate_count: 1, manual_tags: ['Ship sinking'], account_count: 3, alts: [{}, {}] }],
+  ['Player One', 1, 'sot', { xuid: 101, severe_count: 2, moderate_count: 1, manual_tags: ['Ship sinking'], account_count: 3, alts: [{}, {}] }],
   ['Player Two', 3, 'sot', { socials: [twitch('playertwo'), { platform: 'discord', username: 'playertwo' }], badges: ['Content creator'] }],
   ['Player Three', 6, 'on', { moderate_count: 2, light_count: 1 }],
   ['Player Four', 9, '', { light_count: 1, socials: [{ platform: 'steam', username: 'player4' }] }],
@@ -65,6 +65,7 @@ const gmStubs = (initial = store()) => `
     if (o.url.includes('meta.js')) text = '// @version ${version}';
     else if (o.url.includes('twitch.tv/playertwo')) text = '"isLiveBroadcast":true <meta property="og:description" content="Demo stream">';
     else if (o.url.includes('twitch.tv')) text = '';
+    else if (o.url.includes('/reviews?')) text = JSON.stringify({ reactions: { cheater: 4, clown: 2 }, my_reactions: [] });
     else if (o.url.includes('xbl-info')) text = JSON.stringify({ is_playing: true, presence_text: 'Sea of Thieves' });
     else if (o.url.includes('/api/search')) text = window.__searchBody || JSON.stringify({ error: 'not found' });
     o.onload && o.onload({ status: o.url.includes('/api/search') ? (window.__searchStatus || 200) : 200, responseText: text, responseHeaders: '' });

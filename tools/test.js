@@ -43,6 +43,13 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     check('badge text', (await q('.row:has-text("Player One") .tag.met').first().textContent()).includes('met 3 times'), 'wrong text');
     const recap = await q('.recap').textContent();
     check('session card shows six players', /6 players/.test(recap), recap);
+    check('session card names who to watch out for', (await q('.recap .hl.bad').textContent()).includes('Player One'), 'no watch out card');
+    check('session card names the live streamer', (await q('.recap .hl.tw').textContent()).includes('Player Two'), 'no live card');
+    eq('reputation badges carry a shape', await q('.list .row .rep svg').count(), 6);
+    eq('tab counts', [(await q('.nav .tab:has-text("Recent") .count').textContent()), (await q('.nav .tab:has-text("History") .count').textContent())], ['6', '40']);
+    eq('logo links to the project page', [await q('.brand a.home').getAttribute('href'), await q('.brand a.home').getAttribute('target')], ['https://github.com/MrNickIE/sotrep-live', '_blank']);
+    eq('Settings has the project page and issues links', await q('#set-about a').evaluateAll(as => as.map(a => a.getAttribute('href'))), ['https://github.com/MrNickIE/sotrep-live', 'https://github.com/MrNickIE/sotrep-live/issues']);
+    eq('no Clear or Reset in the top bar', await q('.bar button:has-text("Clear"), .bar button:has-text("Reset")').count(), 0);
     check('session card counts flags', /1 red/.test(recap) && /1 orange/.test(recap) && /3 clean/.test(recap), recap);
 
     check('session card: one live streamer, not every linked channel', /1 LIVE now/.test(recap) && /1 with a Twitch channel/.test(recap), recap);
@@ -52,6 +59,8 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await q('button.tab:has-text("History")').click();
     const all = await q('.list .row').count();
     check('history lists players', all >= 10, 'rows ' + all);
+    eq('colour filters show counts', [await q('.filters button:has-text("Red") .n').textContent(), await q('.filters button:has-text("Not checked") .n').textContent()], ['2', '30']);
+    check('history is a table with a header', await q('.list .table .hhead').count() === 1, 'no table header');
     await q('.filters input[type=text]').fill('player th');
     eq('search by name', await q('.list .row').count(), 1);
     await q('.filters input[type=text]').fill('');
@@ -78,7 +87,8 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     // closing settings
     await page.keyboard.press('Escape');   // earlier steps left the panel open
     await q('button[title="Settings"]').click();
-    check('settings button says Close settings while open', /Close settings/.test(await q('button[title="Settings"]').textContent()), 'label');
+    eq('gear button shows pressed while settings is open', await q('button[title="Settings"]').getAttribute('aria-pressed'), 'true');
+    check('settings takes the place of the board', !(await q('.list').isVisible()), 'board still shown');
     await q('.panel-head button:has-text("Close")').click();
     check('panel Close button closes settings', !(await q('.panel').isVisible()), 'still open');
     await q('button[title="Settings"]').click();
@@ -87,7 +97,8 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await q('button[title="Settings"]').click();
     await q('button.tab:has-text("Recent")').click();
     check('switching tab closes settings', !(await q('.panel').isVisible()), 'still open');
-    eq('button label restored', (await q('button[title="Settings"]').textContent()).trim(), 'Settings');
+    eq('gear button released', await q('button[title="Settings"]').getAttribute('aria-pressed'), 'false');
+    check('board back after settings closes', await q('.list').isVisible(), 'board hidden');
 
     // Twitch hiccups: an error or a non-200 keeps LIVE, one clean "offline" keeps it, a second clears it to "was live"
     await page.evaluate(() => {
@@ -115,6 +126,107 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     eq('only expected outbound hosts', odd, []);
     check('no lookups for players already cached', !calls.some(u => u.includes('/api/search')), 'searched ' + calls.filter(u => u.includes('/api/search')).length);
     eq('no page errors', errors, []);
+    await ctx.close();
+  }
+
+  // ----- Clear and Reset live in Settings -----
+  {
+    const { ctx, page, q, errors } = await fresh(browser);
+    await q('button[title="Settings"]').click();
+    await q('.panel button:has-text("Reset everything")').click();
+    eq('Reset arms on the first press', (await q('.panel .btn.armed').textContent()).trim(), 'Press again to reset');
+    check('an armed Reset forgets nothing yet', await page.evaluate(() => Object.keys(__store.seen).length) === 40, 'store changed');
+    await q('.panel button:has-text("Clear board")').click();
+    await q('.panel-head button:has-text("Close")').click();
+    eq('Clear board empties Recent', await q('.list .row').count(), 0);
+    check('Clear board keeps everyone remembered', await page.evaluate(() => Object.keys(__store.seen).length) === 40, 'store changed');
+    eq('no page errors on Clear', errors, []);
+    await ctx.close();
+  }
+
+  // ----- several streamers live at once -----
+  {
+    const st = demo.store();
+    for (const gt of ['Player Three', 'Player Five', 'Player Six']) st.cache[gt].rep.socials = [{ platform: 'twitch', username: gt.replace(' ', '').toLowerCase(), link: `https://www.twitch.tv/${gt.replace(' ', '').toLowerCase()}` }];
+    const init = `const real = window.GM_xmlhttpRequest; window.GM_xmlhttpRequest = (o) => {
+      if (!o.url.includes('twitch.tv')) return real(o);
+      window.__calls.push(o.url); setTimeout(() => o.onload({ status: 200, responseText: '"isLiveBroadcast":true', responseHeaders: '' }), 20); };`;
+    const { ctx, page, q, errors } = await fresh(browser, st, 'dark', { initScript: init });
+    await page.waitForTimeout(9000);   // four Twitch checks, 2 s apart
+    const card = await q('.recap .hl.tw').textContent();
+    check('live card counts every live streamer', /Live on Twitch \(4\)/.test(card), card);
+    eq('live card names three, then the rest as more', [await q('.recap .hl.tw .name').count(), (await q('.recap .hl.tw .more').textContent()).trim()], [3, '+1 more']);
+    check('each live name links to its stream', (await q('.recap .hl.tw .name').first().getAttribute('href')).includes('twitch.tv/'), 'no link');
+    eq('one live card, not one per streamer', await q('.recap .hl.tw').count(), 1);
+    eq('no page errors with several live', errors, []);
+    await ctx.close();
+  }
+
+  // ----- reacting on sotrep.com from the board -----
+  {
+    const st = demo.store();
+    st.cache['Player One'].rep.xuid = 111; st.cache['Player Three'].rep.xuid = 333;
+    st.cache['Player Nine'].rep.xuid = 999;   // in History only
+    const init = `window.__toggle = 200; window.__toggleBody = '{}';
+      const real = window.GM_xmlhttpRequest; window.GM_xmlhttpRequest = (o) => {
+        if (/\\/reviews\\?|\\/reactions\\//.test(o.url)) {
+          window.__calls.push(o.method + ' ' + o.url);
+          const toggle = o.url.includes('/toggle');
+          setTimeout(() => o.onload({ status: toggle ? window.__toggle : 200, responseText: toggle ? window.__toggleBody : JSON.stringify({ reactions: { skilled: 2, clown: 1 }, my_reactions: ['clown'] }), responseHeaders: '' }), 20);
+          return;
+        }
+        return real(o);
+      };`;
+    const { ctx, page, q, errors } = await fresh(browser, st, 'dark', { initScript: init });
+    await page.waitForTimeout(1500);
+    const calls = () => page.evaluate(() => __calls.filter(u => /reviews|reactions/.test(u)));
+    eq('React only on players with an Xbox ID on Recent', await q('.list .react-btn').count(), 2);
+    eq('nothing loaded until you open it', await calls(), []);
+    const one = q('.row:has-text("Player One")');
+    await one.locator('.react-btn').click();
+    await page.waitForTimeout(300);
+    eq('opening loads the counts once', (await calls()).length, 1);
+    eq('four reactions with sotrep counts', await one.locator('.rchip').allTextContents(), ['Suspicious0', 'Skilled2', 'Clown1', 'Friendly0']);
+    eq('your own reaction shows as on', await one.locator('.rchip.on').allTextContents(), ['Clown1']);
+    await one.locator('.rchip:has-text("Skilled")').click();
+    await page.waitForTimeout(300);
+    eq('one click sends one toggle', (await calls()).filter(u => u.startsWith('POST')), ['POST https://www.sotrep.com/api/player/111/reactions/skilled/toggle']);
+    eq('the count and state follow', await one.locator('.rchip.on').allTextContents(), ['Skilled3', 'Clown1']);
+    await one.locator('.rchip:has-text("Clown")').click();
+    await page.waitForTimeout(300);
+    eq('reactions are spaced out', (await calls()).filter(u => u.startsWith('POST')).length, 1);
+    await page.waitForTimeout(1600);
+    eq('then the second one goes', (await calls()).filter(u => u.startsWith('POST')).length, 2);
+    eq('clicking again takes it back', await one.locator('.rchip.on').allTextContents(), ['Skilled3']);
+    await page.evaluate(() => { window.__toggleBody = '{"error":"reaction_cooldown","reaction_type":"skilled"}'; });
+    await page.waitForTimeout(1600);
+    await one.locator('.rchip:has-text("Skilled")').click();
+    await page.waitForTimeout(400);
+    check('a refusal is shown and nothing changes', /Wait a second before selecting Skilled/.test(await one.locator('.react').textContent()) && (await one.locator('.rchip.on').count()) === 1, await one.locator('.react').textContent());
+    await page.evaluate(() => { window.__toggle = 401; window.__toggleBody = '{}'; });
+    await page.waitForTimeout(1600);
+    await one.locator('.rchip:has-text("Friendly")').click();
+    await page.waitForTimeout(400);
+    eq('signed out of sotrep: the usual Sign in button appears', (await q('.status .signin').textContent()).trim(), 'Sign in to sotrep.com');
+    const before = (await calls()).length;
+    await one.locator('.rchip:has-text("Friendly")').click();
+    await page.waitForTimeout(400);
+    eq('no more reactions sent while signed out', (await calls()).length, before);
+    await q('button.tab:has-text("History")').click();
+    eq('no React in History', await q('.list .react-btn').count(), 0);
+    eq('no page errors when reacting', errors, []);
+    await ctx.close();
+  }
+
+  // ----- no React for a name typed by hand -----
+  {
+    const init = `window.__searchBody = JSON.stringify({ gamertag: 'Typed Name', xuid: 555, profile_id: 1 });`;
+    const { ctx, page, q } = await fresh(browser, demo.store(), 'dark', { initScript: init });
+    await q('.controls input').fill('Typed Name');
+    await q('.controls button:has-text("Check")').click();
+    await page.waitForTimeout(1500);
+    eq('typed name is looked up and shown', await q('.row:has-text("Typed Name") .rep').count(), 1);
+    eq('but has no React button', await q('.row:has-text("Typed Name") .react-btn').count(), 0);
     await ctx.close();
   }
 
