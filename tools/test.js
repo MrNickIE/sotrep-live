@@ -43,6 +43,11 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     check('badge text', (await q('.row:has-text("Player One") .tag.met').first().textContent()).includes('met 3 times'), 'wrong text');
     const recap = await q('.recap').textContent();
     check('session card shows six players', /6 players/.test(recap), recap);
+    check('session card names who to watch out for', (await q('.recap .hl.bad').textContent()).includes('Player One'), 'no watch out card');
+    check('session card names the live streamer', (await q('.recap .hl.tw').textContent()).includes('Player Two'), 'no live card');
+    eq('reputation badges carry a shape', await q('.list .row .rep svg').count(), 6);
+    eq('tab counts', [(await q('.nav .tab:has-text("Recent") .count').textContent()), (await q('.nav .tab:has-text("History") .count').textContent())], ['6', '40']);
+    eq('no Clear or Reset in the top bar', await q('.bar button:has-text("Clear"), .bar button:has-text("Reset")').count(), 0);
     check('session card counts flags', /1 red/.test(recap) && /1 orange/.test(recap) && /3 clean/.test(recap), recap);
 
     check('session card: one live streamer, not every linked channel', /1 LIVE now/.test(recap) && /1 with a Twitch channel/.test(recap), recap);
@@ -52,6 +57,8 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await q('button.tab:has-text("History")').click();
     const all = await q('.list .row').count();
     check('history lists players', all >= 10, 'rows ' + all);
+    eq('colour filters show counts', [await q('.filters button:has-text("Red") .n').textContent(), await q('.filters button:has-text("Not checked") .n').textContent()], ['2', '30']);
+    check('history is a table with a header', await q('.list .table .hhead').count() === 1, 'no table header');
     await q('.filters input[type=text]').fill('player th');
     eq('search by name', await q('.list .row').count(), 1);
     await q('.filters input[type=text]').fill('');
@@ -78,7 +85,8 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     // closing settings
     await page.keyboard.press('Escape');   // earlier steps left the panel open
     await q('button[title="Settings"]').click();
-    check('settings button says Close settings while open', /Close settings/.test(await q('button[title="Settings"]').textContent()), 'label');
+    eq('gear button shows pressed while settings is open', await q('button[title="Settings"]').getAttribute('aria-pressed'), 'true');
+    check('settings takes the place of the board', !(await q('.list').isVisible()), 'board still shown');
     await q('.panel-head button:has-text("Close")').click();
     check('panel Close button closes settings', !(await q('.panel').isVisible()), 'still open');
     await q('button[title="Settings"]').click();
@@ -87,7 +95,8 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await q('button[title="Settings"]').click();
     await q('button.tab:has-text("Recent")').click();
     check('switching tab closes settings', !(await q('.panel').isVisible()), 'still open');
-    eq('button label restored', (await q('button[title="Settings"]').textContent()).trim(), 'Settings');
+    eq('gear button released', await q('button[title="Settings"]').getAttribute('aria-pressed'), 'false');
+    check('board back after settings closes', await q('.list').isVisible(), 'board hidden');
 
     // Twitch hiccups: an error or a non-200 keeps LIVE, one clean "offline" keeps it, a second clears it to "was live"
     await page.evaluate(() => {
@@ -115,6 +124,21 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     eq('only expected outbound hosts', odd, []);
     check('no lookups for players already cached', !calls.some(u => u.includes('/api/search')), 'searched ' + calls.filter(u => u.includes('/api/search')).length);
     eq('no page errors', errors, []);
+    await ctx.close();
+  }
+
+  // ----- Clear and Reset live in Settings -----
+  {
+    const { ctx, page, q, errors } = await fresh(browser);
+    await q('button[title="Settings"]').click();
+    await q('.panel button:has-text("Reset everything")').click();
+    eq('Reset arms on the first press', (await q('.panel .btn.armed').textContent()).trim(), 'Press again to reset');
+    check('an armed Reset forgets nothing yet', await page.evaluate(() => Object.keys(__store.seen).length) === 40, 'store changed');
+    await q('.panel button:has-text("Clear board")').click();
+    await q('.panel-head button:has-text("Close")').click();
+    eq('Clear board empties Recent', await q('.list .row').count(), 0);
+    check('Clear board keeps everyone remembered', await page.evaluate(() => Object.keys(__store.seen).length) === 40, 'store changed');
+    eq('no page errors on Clear', errors, []);
     await ctx.close();
   }
 

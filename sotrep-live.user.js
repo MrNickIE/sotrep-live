@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      1.0.11
+// @version      2.0.0
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js
@@ -159,112 +159,126 @@
   // ---------- UI (inside a shadow root so site CSS cannot reach it) ----------
   const css = `
     :host{all:initial}
-    .root{--c-bg0:#0e1114;--c-bg1:#141920;--c-bg2:#11161c;--c-bg3:#161c24;--c-bg4:#1f2733;--c-sevbg:#1a1416;--c-l1:#222a34;--c-l2:#2a3340;--c-l3:#3a4454;--c-fg:#e6e4dd;--c-fgs:#f2f1ec;--c-fg2:#c7cdd6;--c-fg3:#aeb7c2;--c-fg4:#9fb3c8;--c-mute:#8a93a0;--c-mute2:#6f7986;--c-mute3:#5e6875;--c-mute4:#4c5663;--c-acc:#7fb7ff;--c-ok:#4fb57f;--c-lt:#d7b545;--c-mod:#eb9150;--c-sev:#ef6b63;--c-ambbg:#3a2d12;--c-amb:#e6b85c;--c-ambbd:#6b4a1a;--c-grnbg:#143426;--c-grn:#6fcf97;--c-grnbd:#1f5a3a;--c-redbg:#44201e;--c-red:#f08a84;color-scheme:dark}
-    .root.light{--c-bg0:#f1f3f6;--c-bg1:#ffffff;--c-bg2:#f8f9fb;--c-bg3:#f3f4f7;--c-bg4:#e4e8ee;--c-sevbg:#fdf0ef;--c-l1:#e2e6eb;--c-l2:#cdd3db;--c-l3:#b0b8c3;--c-fg:#1b2128;--c-fgs:#0b0f14;--c-fg2:#38414c;--c-fg3:#4a5462;--c-fg4:#4a6078;--c-mute:#5b6676;--c-mute2:#657080;--c-mute3:#768091;--c-mute4:#8791a0;--c-acc:#1d5fc4;--c-ok:#1b7a4a;--c-lt:#8f7008;--c-mod:#b0540c;--c-sev:#bf3029;--c-ambbg:#fdf0d3;--c-amb:#85600f;--c-ambbd:#e2c071;--c-grnbg:#dcf3e5;--c-grn:#1b7a4a;--c-grnbd:#9dd2b3;--c-redbg:#fbe2e0;--c-red:#b3302a;color-scheme:light}
+    .root{--c-bg0:#0e1114;--c-bg1:#141920;--c-bg2:#11161c;--c-bg3:#171d26;--c-bg4:#1f2733;--c-sevbg:#1c1416;--c-sevbd:#4a2422;--c-l1:#222a34;--c-l2:#2a3340;--c-l3:#3a4454;--c-fg:#e6e4dd;--c-fgs:#f2f1ec;--c-fg2:#c7cdd6;--c-fg3:#aeb7c2;--c-fg4:#9fb3c8;--c-mute:#8f98a5;--c-mute2:#7b8592;--c-mute3:#69737f;--c-mute4:#56606c;--c-acc:#7fb7ff;--c-accfg:#0b1220;--c-ok:#5cc28c;--c-lt:#d7b545;--c-mod:#eb9150;--c-sev:#ef6b63;--c-ambbg:#3a2d12;--c-amb:#e6b85c;--c-ambbd:#6b4a1a;--c-grnbg:#143426;--c-grn:#6fcf97;--c-grnbd:#1f5a3a;--c-redbg:#44201e;--c-red:#f08a84;--c-tw:#b69cff;--c-twbg:#211936;--c-twbd:#4d3790;color-scheme:dark}
+    .root.light{--c-bg0:#f1f3f6;--c-bg1:#ffffff;--c-bg2:#f8f9fb;--c-bg3:#ffffff;--c-bg4:#e6eaf0;--c-sevbg:#fdf3f2;--c-sevbd:#f1c4c0;--c-l1:#e2e6eb;--c-l2:#cdd3db;--c-l3:#b0b8c3;--c-fg:#1b2128;--c-fgs:#0b0f14;--c-fg2:#38414c;--c-fg3:#4a5462;--c-fg4:#4a6078;--c-mute:#5b6676;--c-mute2:#5f6a7a;--c-mute3:#6a7586;--c-mute4:#7c8697;--c-acc:#1d5fc4;--c-accfg:#ffffff;--c-ok:#1b7a4a;--c-lt:#8f7008;--c-mod:#b0540c;--c-sev:#bf3029;--c-ambbg:#fdf0d3;--c-amb:#85600f;--c-ambbd:#e2c071;--c-grnbg:#dcf3e5;--c-grn:#1b7a4a;--c-grnbd:#9dd2b3;--c-redbg:#fbe2e0;--c-red:#b3302a;--c-tw:#6d28d9;--c-twbg:#f3edff;--c-twbd:#cdb8f7;color-scheme:light}
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     .root{position:fixed;inset:0;z-index:2147483000;background:var(--c-bg0);color:var(--c-fg);
-      font:13px/1.45 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;overflow-y:auto}
-    .bar{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;min-height:48px;padding:8px 16px;
-      background:var(--c-bg1);border-bottom:1px solid var(--c-l1)}
-    .bar .tabs{flex-shrink:0}
-    .controls{display:flex;align-items:center;gap:10px;margin-left:auto;flex:1 1 auto;justify-content:flex-end;min-width:0}
-    .controls .search{margin-right:auto}
-    .brand{font-weight:700;font-size:14px;letter-spacing:.02em;white-space:nowrap}
+      font:14px/1.45 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;overflow-y:auto}
+    button,input{font-family:inherit}
+    button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--c-acc);outline-offset:2px}
+    svg{display:block;flex:none}
+    .dot{flex:none;display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--c-l3)}
+    .lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--c-mute);font-weight:600}
+
+    .bar{position:sticky;top:0;z-index:2;background:var(--c-bg1);border-bottom:1px solid var(--c-l1);display:flex;flex-wrap:wrap;align-items:center;gap:6px 24px;min-height:60px;padding:0 20px}
+    .brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:16px;letter-spacing:.01em;white-space:nowrap;color:var(--c-fgs)}
     .brand b{color:var(--c-acc);font-weight:700}
-    .ver{margin-left:8px;font-size:11px;font-weight:500;color:var(--c-mute2);text-decoration:none;padding:1px 6px;border-radius:999px;border:1px solid var(--c-l2);vertical-align:middle}
+    .brand svg{color:var(--c-acc)}
+    .ver{font-size:11px;font-weight:500;color:var(--c-mute);text-decoration:none;padding:2px 8px;border-radius:999px;border:1px solid var(--c-l2)}
     .ver:hover{color:var(--c-fg);border-color:var(--c-l3)}
     .ver.stale{color:var(--c-amb);border-color:var(--c-ambbd);background:var(--c-ambbg)}
-    .status{color:var(--c-mute);font-size:12px;white-space:nowrap;overflow:hidden;min-width:0;flex:1 1 200px;display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px}
-    .status .stxt{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+    .nav{display:flex;gap:20px;align-self:stretch}
+    .nav .tab{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:7px;min-height:58px;padding:0 2px;font-size:14px;font-weight:500;color:var(--c-mute);border-bottom:2px solid transparent}
+    .nav .tab:hover{color:var(--c-fg)}
+    .nav .tab.on{color:var(--c-fgs);border-bottom-color:var(--c-acc)}
+    .count{font-size:11.5px;line-height:18px;padding:0 7px;border-radius:999px;background:var(--c-bg4);color:var(--c-fg2);font-weight:500}
+    .info{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 220px;padding:6px 0}
+    .status{color:var(--c-mute);font-size:12.5px;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
+    .status .stxt{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .status .signin{flex:none}
-    .status .dot{flex:none;width:6px;height:6px;border-radius:50%;background:#2f9e63}
-    .status .dot.err{background:#d6453d}
-    .me{font-size:11.5px;line-height:20px;padding:0 8px;border-radius:999px;border:1px solid var(--c-l2);color:var(--c-mute);white-space:nowrap;cursor:help}
-    .me.ok{color:var(--c-ok);border-color:var(--c-grnbd);background:var(--c-grnbg)}
-    .me.warn{color:var(--c-amb);border-color:var(--c-ambbd);background:var(--c-ambbg)}
-    .search{display:flex;align-items:center;background:var(--c-bg0);border:1px solid var(--c-l2);border-radius:6px;height:30px;overflow:hidden;flex:1 1 160px;max-width:420px}
-    .search input{all:unset;flex:1;min-width:0;height:30px;padding:0 10px;color:var(--c-fg);font:12.5px ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
+    .status .dot{background:var(--c-ok);box-shadow:0 0 0 3px rgba(92,194,140,.2)}
+    .status .dot.err{background:var(--c-sev);box-shadow:0 0 0 3px rgba(239,107,99,.2)}
+    .me{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--c-mute);white-space:nowrap;cursor:help}
+    .me.ok .dot{background:var(--c-acc)}
+    .me.warn{color:var(--c-amb)}
+    .me.warn .dot{background:var(--c-amb)}
+    .controls{display:flex;align-items:center;gap:8px;margin-left:auto;flex:0 1 420px;min-width:0;padding:8px 0}
+    .search{display:flex;align-items:center;gap:8px;background:var(--c-bg0);border:1px solid var(--c-l2);border-radius:8px;height:36px;padding:0 10px;flex:1 1 180px;min-width:0}
+    .search:focus-within{border-color:var(--c-acc)}
+    .search svg{color:var(--c-mute)}
+    .search input{all:unset;flex:1;min-width:0;height:34px;color:var(--c-fg);font-size:13.5px}
     .search input::placeholder{color:var(--c-mute3)}
-    .search button{all:unset;cursor:pointer;height:30px;padding:0 10px;color:var(--c-fg4);font-size:12px;border-left:1px solid var(--c-l2)}
-    .search button:hover{background:var(--c-bg4);color:var(--c-fg)}
-    .btn{all:unset;cursor:pointer;height:30px;padding:0 10px;border-radius:6px;border:1px solid var(--c-l2);background:var(--c-bg3);color:var(--c-fg2);font-size:12px;white-space:nowrap}
-    .btn:hover{background:var(--c-bg4);color:#fff}
-    .btn.quiet{border-color:transparent;background:transparent;color:var(--c-mute)}
-    .btn.quiet:hover{background:var(--c-bg4);color:var(--c-fg)}
-    .btn.armed,.btn.armed:hover{background:#6b2320;border-color:#8a2f2b;color:#fff}
-    .tabs{display:flex;background:var(--c-bg0);border:1px solid var(--c-l2);border-radius:6px;height:30px;overflow:hidden}
-    .tab{all:unset;cursor:pointer;height:30px;padding:0 12px;font-size:12px;color:var(--c-mute)}
-    .tab:hover{color:var(--c-fg)}
-    .tab.on{background:var(--c-bg4);color:var(--c-fgs)}
-    .mini{all:unset;cursor:pointer;font-size:11px;line-height:18px;height:18px;padding:0 8px;border-radius:4px;border:1px solid var(--c-l2);color:var(--c-fg4)}
-    a.mini{display:inline-block;text-decoration:none;vertical-align:middle}
-    .mini:hover{background:var(--c-bg4);color:#fff}
-    .row.unchecked{opacity:.75}
-    .section.fold{cursor:pointer;margin-top:18px;user-select:none}
-    .section.fold:hover{color:var(--c-fg3)}
-    .section .hint{margin-left:auto;text-transform:none;letter-spacing:0;color:var(--c-acc);font-size:11px}
-    .btn.on{background:var(--c-bg4);color:var(--c-fgs)}
-    .banner{background:#6b2320;color:#fff;padding:10px 16px;font-size:13px;border-bottom:1px solid #8a2f2b}
+    .btn{all:unset;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;padding:0 13px;border-radius:8px;border:1px solid var(--c-l2);background:var(--c-bg3);color:var(--c-fg);font-size:13px;font-weight:500;white-space:nowrap}
+    .btn:hover{background:var(--c-bg4)}
+    .btn.primary{background:var(--c-acc);border-color:var(--c-acc);color:var(--c-accfg);font-weight:600;height:36px}
+    .btn.primary:hover{filter:brightness(1.08)}
+    .btn.icon{width:36px;height:36px;padding:0;color:var(--c-fg2)}
+    .btn.icon.on{background:var(--c-bg4);border-color:var(--c-acc);color:var(--c-fgs)}
+    .btn.danger{background:transparent;border-color:var(--c-sevbd);color:var(--c-sev)}
+    .btn.danger:hover{background:var(--c-sevbg)}
+    .btn.armed,.btn.armed:hover{background:#9a332e;border-color:#9a332e;color:#fff}
+    .mini{all:unset;cursor:pointer;font-size:11.5px;line-height:22px;height:22px;padding:0 9px;border-radius:6px;border:1px solid var(--c-l2);color:var(--c-fg2);white-space:nowrap}
+    a.mini{display:inline-block;text-decoration:none}
+    .mini:hover{background:var(--c-bg4);color:var(--c-fgs)}
+    .banner{background:#7a2824;color:#fff;padding:10px 20px;font-size:13px;border-bottom:1px solid #8a2f2b}
     .banner a{color:#fff;font-weight:700;text-decoration:underline}
-    .panel{background:var(--c-bg2);border-bottom:1px solid var(--c-l1);padding:14px 16px 16px;display:grid;gap:12px;max-width:100%}
-    .panel-t{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--c-mute2)}
-    .fld{display:grid;grid-template-columns:90px 1fr;gap:4px 14px;align-items:center;max-width:820px}
-    .fld-l{color:var(--c-mute);font-size:12px}
-    .fld-h{grid-column:2;color:var(--c-mute3);font-size:11.5px}
-    .row-ctl.wide{flex-wrap:nowrap}
-    .row-ctl.wide input{flex:1;min-width:200px}
-    .fld input[type=text],.fld input[type=password]{all:unset;width:100%;max-width:560px;height:30px;padding:0 10px;border-radius:6px;border:1px solid var(--c-l2);background:var(--c-bg0);color:var(--c-fg);font:12.5px ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
-    .fld select{all:unset;height:30px;padding:0 10px;border-radius:6px;border:1px solid var(--c-l2);background:var(--c-bg0);color:var(--c-fg);font-size:12.5px;cursor:pointer}
-    .chk{display:flex;align-items:center;gap:8px;color:var(--c-fg2);font-size:12.5px;cursor:pointer}
-    .chk input{all:unset;width:14px;height:14px;border-radius:3px;border:1px solid var(--c-l3);background:var(--c-bg0);display:inline-block;position:relative;cursor:pointer}
-    .chk input:checked{background:#2f9e63;border-color:#2f9e63}
-    .chk input:checked::after{content:"";position:absolute;left:4px;top:1px;width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
-    .row-ctl{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-    .stack{display:grid;gap:6px}
-    .toggle{display:flex;align-items:center;gap:6px;color:var(--c-mute);font-size:12px;white-space:nowrap;cursor:pointer;user-select:none}
-    .toggle input{all:unset;width:28px;height:16px;border-radius:999px;background:var(--c-l2);position:relative;transition:background .15s;cursor:pointer}
-    .toggle input::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:var(--c-mute);transition:left .15s,background .15s}
-    .toggle input:checked{background:#2f9e63}
-    .toggle input:checked::after{left:14px;background:#fff}
-    .list,.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(520px,1fr));gap:8px;align-content:start}
-    @media (max-width:600px){.list,.grid{grid-template-columns:1fr}}
-    .list{padding:14px 16px 40px}
+    .news{margin:16px 20px 0;padding:14px 18px;border-radius:12px;background:var(--c-bg1);border:1px solid var(--c-acc);display:grid;gap:6px;font-size:13px}
+    .news b{color:var(--c-fgs);font-size:14px}
+    .news ul{padding-left:18px;color:var(--c-fg2);display:grid;gap:3px}
+    .news .btn{justify-self:start;margin-top:6px}
+
+    .list{display:grid;grid-template-columns:repeat(auto-fill,minmax(480px,1fr));gap:10px;align-content:start;padding:20px 20px 48px}
+    .list.hist{display:block}
+    @media (max-width:600px){.list{grid-template-columns:1fr;padding:14px 12px 40px}}
     .grid{grid-column:1/-1}
-    .section{grid-column:1/-1;display:flex;align-items:baseline;gap:8px;color:var(--c-mute2);font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin:6px 0 2px}
-    .section span{color:var(--c-mute4)}
-    .empty{grid-column:1/-1;color:var(--c-mute2);padding:28px 0;font-size:13px}
-    .row{display:grid;grid-template-columns:40px 1fr auto;gap:12px;align-items:center;padding:10px 12px 10px 10px;min-width:0;
-      border-radius:8px;background:var(--c-bg1);border:1px solid var(--c-l1);border-left:3px solid var(--c-l3)}
-    .row.clean{border-left-color:#2f9e63}
-    .row.light{border-left-color:#c9a227}
-    .row.moderate{border-left-color:#e07b2a}
-    .row.severe{border-left-color:#d6453d;background:var(--c-sevbg)}
-    .row.pending{opacity:.65}
-    .pic{width:40px;height:40px;border-radius:6px;background:var(--c-bg4);object-fit:cover;display:flex;align-items:center;justify-content:center;
-      color:var(--c-mute);font-weight:700;font-size:16px}
+    .section{grid-column:1/-1;display:flex;align-items:baseline;gap:8px;color:var(--c-mute);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin:6px 0 0}
+    .section span{color:var(--c-fg2)}
+    .section .note{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:400;color:var(--c-mute)}
+    .empty{grid-column:1/-1;color:var(--c-mute);padding:28px 0;font-size:13.5px}
+
+    .recap{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:16px 36px;align-items:center;padding:18px 20px;border-radius:14px;background:var(--c-bg1);border:1px solid var(--c-l1);margin-bottom:8px}
+    .recap-a{display:flex;flex-direction:column;gap:2px;min-width:150px}
+    .big{font-size:28px;font-weight:700;color:var(--c-fgs);line-height:1.15}
+    .sub{font-size:12.5px;color:var(--c-mute)}
+    .recap-b{flex:1 1 320px;display:flex;flex-direction:column;gap:10px;min-width:0}
+    .riskbar{display:flex;gap:2px;height:10px;border-radius:999px;overflow:hidden;background:var(--c-bg4)}
+    .legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--c-fg2);align-items:center}
+    .legend .k{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+    .legend b{color:var(--c-fgs);font-weight:600}
+    .legend .x{color:var(--c-mute);white-space:nowrap}
+    .recap-c{display:flex;flex-wrap:wrap;gap:10px}
+    .hl{display:flex;flex-direction:column;gap:3px;padding:10px 14px;border-radius:10px;border:1px solid var(--c-l2);background:var(--c-bg2);min-width:190px;max-width:300px}
+    .hl .name{font-size:14px}
+    .hl.bad{background:var(--c-sevbg);border-color:var(--c-sevbd)}
+    .hl.bad .lbl{color:var(--c-sev)}
+    .hl.tw{background:var(--c-twbg);border-color:var(--c-twbd)}
+    .hl.tw .lbl{color:var(--c-tw)}
+    .hl.good .lbl{color:var(--c-ok)}
+    .hl .sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+    .row{--ring:var(--c-l3);--gap:var(--c-bg1);display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:14px;align-items:start;padding:14px 16px;min-width:0;
+      border-radius:12px;background:var(--c-bg1);border:1px solid var(--c-l1)}
+    .row.clean{--ring:var(--c-ok)}
+    .row.light{--ring:var(--c-lt)}
+    .row.moderate{--ring:var(--c-mod)}
+    .row.severe{--ring:var(--c-sev);--gap:var(--c-sevbg);background:var(--c-sevbg);border-color:var(--c-sevbd)}
+    .row.pending,.row.unchecked{opacity:.75}
+    .pic{width:44px;height:44px;border-radius:50%;background:var(--c-bg4);object-fit:cover;display:flex;align-items:center;justify-content:center;
+      color:var(--c-fg2);font-weight:600;font-size:16px;box-shadow:0 0 0 2px var(--gap),0 0 0 4px var(--ring)}
     .main{min-width:0}
-    .line{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;min-width:0}
-    .name{font-weight:600;font-size:14px;color:var(--c-fgs);text-decoration:none}
+    .line{display:flex;align-items:center;gap:6px 10px;flex-wrap:wrap;min-width:0}
+    .name{font-weight:600;font-size:15px;color:var(--c-fgs);text-decoration:none;overflow-wrap:anywhere}
     .name:hover{text-decoration:underline}
-    .rep{font-size:12px;color:var(--c-mute)}
+    .rep{display:inline-flex;align-items:center;gap:5px;min-height:22px;padding:1px 9px 1px 7px;border-radius:999px;border:1px solid var(--c-l2);font-size:12px;font-weight:500;color:var(--c-mute)}
+    .row.clean .rep,.row.light .rep,.row.moderate .rep,.row.severe .rep{border-color:currentColor;font-weight:600}
     .row.clean .rep{color:var(--c-ok)}
     .row.light .rep{color:var(--c-lt)}
     .row.moderate .rep{color:var(--c-mod)}
-    .row.severe .rep{color:var(--c-sev);font-weight:600}
-    .meta{display:flex;flex-wrap:wrap;gap:4px 6px;margin-top:5px;align-items:center;min-width:0}
-    .social{overflow:hidden;text-overflow:ellipsis;max-width:100%}
-    .tag{font-size:11px;line-height:18px;height:18px;padding:0 7px;border-radius:4px;background:var(--c-bg4);color:var(--c-fg3);white-space:nowrap}
+    .row.severe .rep{color:var(--c-sev)}
+    .meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center;min-width:0}
+    .tag{display:inline-flex;align-items:center;font-size:12px;line-height:22px;height:22px;padding:0 8px;border-radius:6px;background:var(--c-bg4);color:var(--c-fg2);white-space:nowrap;font-weight:500}
     .tag.amber{background:var(--c-ambbg);color:var(--c-amb)}
     .tag.green{background:var(--c-grnbg);color:var(--c-grn)}
     .tag.red{background:var(--c-redbg);color:var(--c-red)}
-    .tag.live{background:#9146ff;color:#fff;font-weight:600;text-decoration:none}
-    .tag.live:hover{background:#a970ff}
+    .tag.live{background:#7c3aed;color:#fff;font-weight:600;text-decoration:none}
+    .tag.live:hover{background:#8b5cf6}
     .tag.wasLive{text-decoration:none}
-    .tag.wasLive:hover{color:var(--c-fg)}
-    .social{font-size:11px;color:var(--c-mute);white-space:nowrap;display:inline-flex;gap:8px;align-items:center}
-    .soc{display:inline-flex;align-items:center;gap:4px;color:var(--c-mute);text-decoration:none}
-    a.soc{color:var(--c-fg3)}
-    a.soc:hover{color:#fff}
+    .tag.wasLive:hover{color:var(--c-fgs)}
+    .tag.met{cursor:help}
+    .social{display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0;max-width:100%}
+    .soc{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px 0 3px;border-radius:6px;border:1px solid var(--c-l2);font-size:12px;color:var(--c-mute);text-decoration:none;white-space:nowrap;max-width:100%;overflow:hidden}
+    a.soc{color:var(--c-fg2)}
+    a.soc:hover{color:var(--c-fgs);border-color:var(--c-l3)}
     .pbadge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 3px;border-radius:4px;font-size:9.5px;font-weight:700;letter-spacing:.02em;color:#fff;background:var(--c-l3)}
     .pbadge.twitch{background:#9146ff}
     .pbadge.discord{background:#5865f2}
@@ -277,31 +291,100 @@
     .pbadge.instagram{background:#c13584}
     .pbadge.reddit{background:#ff4500}
     .pbadge.bluesky{background:#1185fe}
-    .side{text-align:right;font-size:11.5px;color:var(--c-mute2);white-space:nowrap;line-height:1.5}
-    .side .pres{color:var(--c-mute)}
-    .side .pres.on{color:var(--c-ok)}
-    .side .pres.sot{color:var(--c-acc)}
-    .panel-head{display:flex;align-items:center;justify-content:space-between;max-width:820px}
-    .fld .tabs{justify-self:start}
-    .tag.met{background:var(--c-bg4);color:var(--c-fg3);cursor:help}
-    .filters{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 16px;background:var(--c-bg2);border-bottom:1px solid var(--c-l1)}
-    .filters .count{color:var(--c-mute2);font-size:12px;margin-left:auto}
-    .recap{grid-column:1/-1;display:grid;gap:6px;padding:10px 12px;border-radius:8px;background:var(--c-bg1);border:1px solid var(--c-l1);margin-bottom:4px}
-    .recap-t{display:flex;align-items:baseline;gap:8px;color:var(--c-fg3);font-size:12px}
-    .recap-t b{color:var(--c-fgs);font-size:13px}
-    .recap .meta{margin-top:0}
-    .recap .name{font-size:12.5px}
-    .news{background:var(--c-bg2);border-bottom:1px solid var(--c-l1);border-left:3px solid var(--c-acc);padding:10px 16px;display:grid;gap:4px;font-size:12.5px}
-    .news b{color:var(--c-fgs)}
-    .news ul{padding-left:18px;color:var(--c-fg2)}
-    .news .btn{justify-self:start;margin-top:4px}
-    .root.compact .list{padding:8px 12px 28px;gap:5px;grid-template-columns:repeat(auto-fit,minmax(380px,1fr))}
+    .side{display:flex;flex-direction:column;align-items:flex-end;gap:4px;text-align:right;font-size:12.5px;color:var(--c-mute);white-space:nowrap}
+    .pres{display:inline-flex;align-items:center;gap:6px;color:var(--c-fg2)}
+    .pres.sot .dot{background:var(--c-acc)}
+    .pres.on .dot{background:var(--c-ok)}
+    .prof{font-size:12px;color:var(--c-acc);text-decoration:none}
+    .prof:hover{text-decoration:underline}
+
+    .table{border:1px solid var(--c-l1);border-radius:14px;background:var(--c-bg1);overflow-x:auto}
+    .tin{min-width:880px}
+    .hhead,.row.hrow{display:grid;grid-template-columns:minmax(200px,1.3fr) minmax(170px,1fr) 80px minmax(200px,1.7fr) 110px;gap:14px;align-items:center;padding:8px 18px}
+    .hhead{min-height:38px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--c-mute);font-weight:600}
+    .hhead :last-child,.hrow .when{text-align:right}
+    .row.hrow{min-height:54px;border-radius:0;border:0;border-top:1px solid var(--c-l1);background:transparent}
+    .row.hrow.severe{background:var(--c-sevbg)}
+    .row.hrow{--gap:var(--c-bg1)}
+    .row.hrow.severe{--gap:var(--c-sevbg)}
+    .hrow .who{display:flex;align-items:center;gap:12px;min-width:0}
+    .hrow .pic{width:30px;height:30px;font-size:12px;box-shadow:0 0 0 2px var(--gap),0 0 0 3.5px var(--ring)}
+    .hrow .name{font-size:14px}
+    .hrow .meta{margin-top:0}
+    .hrow .times{font-size:13px;color:var(--c-fg2);cursor:help}
+    .hrow .when{font-size:12.5px;color:var(--c-mute);white-space:nowrap}
+    .tsec{display:flex;align-items:baseline;gap:8px;padding:14px 18px 8px;border-top:1px solid var(--c-l1);color:var(--c-mute);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+    .tsec span{color:var(--c-fg2)}
+    .tsec.fold{cursor:pointer;user-select:none;padding-bottom:14px}
+    .tsec.fold:hover{color:var(--c-fg3)}
+    .tsec .hint{margin-left:auto;text-transform:none;letter-spacing:0;color:var(--c-acc);font-size:12px;font-weight:500}
+
+    .filters{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:14px 20px;background:var(--c-bg2);border-bottom:1px solid var(--c-l1)}
+    .filters .search{flex:1 1 220px;max-width:380px}
+    .fchips{display:flex;flex-wrap:wrap;gap:6px}
+    .fchip{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 12px;border-radius:999px;border:1px solid var(--c-l2);background:var(--c-bg3);color:var(--c-fg2);font-size:13px}
+    .fchip:hover{border-color:var(--c-l3);color:var(--c-fgs)}
+    .fchip.on{background:var(--c-fgs);border-color:var(--c-fgs);color:var(--c-bg0)}
+    .fchip .n{opacity:.7;font-weight:600}
+    .fcount{margin-left:auto;color:var(--c-mute);font-size:12.5px}
+    .toggle{display:flex;align-items:center;gap:8px;color:var(--c-fg2);font-size:13px;white-space:nowrap;cursor:pointer;user-select:none}
+    .toggle input,.sw{all:unset;flex:none;width:34px;height:20px;border-radius:999px;background:var(--c-l2);position:relative;transition:background .15s;cursor:pointer}
+    .toggle input::after,.sw::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s}
+    .toggle input:checked,.sw:checked{background:var(--c-ok)}
+    .toggle input:checked::after,.sw:checked::after{left:17px}
+    .toggle input:focus-visible,.sw:focus-visible{outline:2px solid var(--c-acc);outline-offset:2px}
+
+    .panel{display:flex;flex-wrap:wrap;gap:20px 28px;padding:24px 20px 48px;align-items:flex-start}
+    .panel-head{flex:1 1 100%;display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .panel-head h2{font-size:20px;font-weight:700;color:var(--c-fgs)}
+    .snav{flex:0 1 190px;display:flex;flex-direction:column;gap:2px}
+    .snav button{all:unset;cursor:pointer;padding:8px 12px;border-radius:8px;font-size:13.5px;color:var(--c-fg2)}
+    .snav button:hover{background:var(--c-bg4);color:var(--c-fgs)}
+    @media (max-width:720px){.snav{display:none}}
+    .cards{flex:999 1 600px;min-width:0;display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
+    .col{flex:1 1 420px;min-width:0;display:flex;flex-direction:column;gap:16px}
+    @media (max-width:600px){.col{flex-basis:100%}}
+    .card{background:var(--c-bg1);border:1px solid var(--c-l1);border-radius:14px;padding:18px 20px;display:flex;flex-direction:column;gap:12px;min-width:0;scroll-margin-top:80px}
+    .card h3{font-size:15px;font-weight:600;color:var(--c-fgs)}
+    .hint{font-size:12.5px;color:var(--c-mute);line-height:1.5}
+    .card h3 + .hint{margin-top:-8px}
+    .opt{display:flex;align-items:center;gap:8px 12px;padding:11px 14px;border-radius:10px;border:1px solid var(--c-l1);background:var(--c-bg2);flex-wrap:wrap}
+    label.opt{cursor:pointer}
+    .opt .txt{flex:1 1 180px;min-width:0;display:flex;flex-direction:column}
+    .opt .t{font-size:13.5px;font-weight:500;color:var(--c-fgs)}
+    .opt .s{font-size:12px;color:var(--c-mute)}
+    .opt .end{display:flex;align-items:center;gap:8px;margin-left:auto}
+    .opt .dot{width:12px;height:12px}
+    .opt .ico{color:var(--c-fg2)}
+    .opt .full{flex:1 1 100%;display:flex;gap:8px;flex-wrap:wrap}
+    .field{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .input{all:unset;flex:1 1 180px;min-width:0;height:34px;padding:0 12px;border-radius:8px;border:1px solid var(--c-l2);background:var(--c-bg0);color:var(--c-fg);font-size:13px}
+    .input:focus{border-color:var(--c-acc)}
+    .input::placeholder{color:var(--c-mute3)}
+    .msg{font-size:12.5px;color:var(--c-mute)}
+    .msg:empty{display:none}
+    .setrow{display:flex;align-items:center;justify-content:space-between;gap:10px 12px;flex-wrap:wrap;font-size:13.5px}
+    .setrow .hint{display:block;font-size:12px}
+    .seg{display:inline-flex;padding:3px;border-radius:10px;background:var(--c-bg2);border:1px solid var(--c-l1)}
+    .seg .tab{all:unset;cursor:pointer;padding:6px 13px;border-radius:7px;font-size:13px;color:var(--c-fg2)}
+    .seg .tab:hover{color:var(--c-fgs)}
+    .seg .tab.on{background:var(--c-bg4);color:var(--c-fgs);font-weight:600}
+    .dzone{border-top:1px solid var(--c-l1);padding-top:14px;display:flex;flex-direction:column;gap:10px}
+    .dzone .lbl{color:var(--c-sev)}
+    .dzone .setrow .hint{flex:1 1 220px;font-size:12.5px}
+
+    .root.compact .list{padding:10px 12px 28px;gap:6px;grid-template-columns:repeat(auto-fill,minmax(380px,1fr))}
     @media (max-width:600px){.root.compact .list{grid-template-columns:1fr}}
-    .root.compact .row{padding:5px 8px 5px 7px;gap:9px;grid-template-columns:28px 1fr auto}
-    .root.compact .pic{width:28px;height:28px;font-size:13px}
-    .root.compact .name{font-size:13px}
-    .root.compact .meta{margin-top:2px}
-    .root.compact .section{margin:2px 0 0}
+    .root.compact .row{padding:8px 10px;gap:10px;grid-template-columns:30px minmax(0,1fr) auto}
+    .root.compact .pic{width:30px;height:30px;font-size:13px;box-shadow:0 0 0 2px var(--gap),0 0 0 3.5px var(--ring)}
+    .root.compact .name{font-size:13.5px}
+    .root.compact .meta{margin-top:4px}
+    .root.compact .side{gap:2px}
+    .root.compact .row.hrow{min-height:40px;padding:4px 18px;grid-template-columns:minmax(200px,1.3fr) minmax(170px,1fr) 80px minmax(200px,1.7fr) 110px}
+    .root.compact .hrow .pic{width:24px;height:24px;font-size:11px}
+    .root.compact .hrow .meta{margin-top:0}
+    .root.compact .recap{padding:12px 16px;margin-bottom:4px}
+    .root.compact .big{font-size:22px}
   `;
 
   function h(tag, attrs, ...kids) {
@@ -315,6 +398,24 @@
     for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
     return el;
   }
+
+  // Line icons, drawn in the current text colour. Fixed strings only, never anything from a player.
+  const ICONS = {
+    shield: '<path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+    close: '<path d="M6 6l12 12M18 6L6 18"/>',
+    severe: '<path d="M8 2h8l6 6v8l-6 6H8l-6-6V8z"/><path d="M12 8v5M12 16.5v.5"/>',
+    moderate: '<path d="M12 3l10 18H2z"/><path d="M12 10v4M12 17.5v.5"/>',
+    light: '<circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.5"/>',
+    clean: '<path d="M5 12.5l4.5 4.5L19 7"/>',
+    sound: '<path d="M11 5L6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>',
+    chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    screen: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+    pulse: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+  };
+  const icon = (name, size = 16, sw = 2) => h('span', { class: 'ico', style: 'display:inline-flex', 'aria-hidden': 'true',
+    html: `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>` });
 
   // A button that must be pressed twice: first press arms it (label changes, turns red) for 4 s, second press fires.
   function twoPress(label, armedLabel, cls, action, title) {
@@ -459,7 +560,7 @@
     const privacy = 'Xbox can take a few minutes to notice you have come online. If it never does while you play, your Xbox privacy setting is probably hiding your status from people who are not your friends (Xbox app, Settings, Privacy, "Others can see if you\'re online"). That only affects this pill.';
     let cls, label, tip;
     if (x.is_playing) {
-      cls = 'ok'; label = 'Xbox: playing SoT'; tip = txt || 'Xbox Live sees you in Sea of Thieves.';
+      cls = 'ok'; label = 'You: playing SoT on Xbox'; tip = txt || 'Xbox Live sees you in Sea of Thieves.';
     } else if (!txt) {
       cls = ''; label = 'Xbox status hidden';
       tip = `${said} ${privacy} If you are set to appear offline, Rare's Recently Met list stops updating and this board will not see new players.`;
@@ -473,7 +574,7 @@
       cls = ''; label = 'Xbox: ' + (txt.length > 28 ? txt.slice(0, 28) + '…' : txt); tip = txt;
     }
     meEl.className = 'me ' + cls;
-    meEl.textContent = label;
+    meEl.replaceChildren(h('span', { class: 'dot' }), label);
     meEl.title = tip + (x.last_played_text ? `  Last played SoT ${x.last_played_text}.` : '');
     meEl.style.display = '';
   }
@@ -660,7 +761,7 @@
   if (darkQuery && darkQuery.addEventListener) darkQuery.addEventListener('change', applyDisplay);
   // a row of buttons where one is on; .pick(value) sets it from code
   function segmented(options, current, onPick) {
-    const wrap = h('div', { class: 'tabs' });
+    const wrap = h('div', { class: 'seg' });
     const btns = options.map(([v, label]) => h('button', { class: 'tab' + (v === current ? ' on' : ''), 'data-v': v }, label));
     wrap.pick = (v) => btns.forEach(b => b.classList.toggle('on', b.getAttribute('data-v') === v));
     btns.forEach(b => b.addEventListener('click', () => { wrap.pick(b.getAttribute('data-v')); onPick(b.getAttribute('data-v')); }));
@@ -744,6 +845,12 @@
   // ---------- what's new ----------
   // One short list per release, shown once after an update. A fresh install sees nothing: it has nothing to compare to.
   const WHATS_NEW = {
+    '2.0.0': [
+      'A fresh look. The session card shows your red, orange, yellow and clean split as a bar, with who to watch out for and who is live on Twitch.',
+      'Every player has a reputation badge with its own shape (octagon red, triangle orange, circle yellow, tick clean), so the colours are easy to tell apart, plus a link to their SoT Rep profile.',
+      'History is now a table you can scan: reputation, times met, tags and when, grouped by day. The colour filters show how many players each one holds.',
+      'Settings is laid out in sections with switches. Clear and Reset have moved into Settings, under Your data, so they cannot be pressed by accident.',
+    ],
     '1.0.11': [
       'A streamer you have just met shows LIVE much sooner: if the first Twitch check says not live (or fails), it checks once more a minute later instead of waiting five.',
     ],
@@ -795,20 +902,22 @@
 
   function buildAlertsPanel() {
     const a = state.alerts;
-    const field = (label, control, hint) => h('div', { class: 'fld' }, h('div', { class: 'fld-l' }, label), control, hint ? h('div', { class: 'fld-h' }, hint) : null);
-    const check = (key, text) => {
-      const c = h('input', { type: 'checkbox' }); c.checked = !!a[key];
+    // a switch row: coloured dot or icon, a title and a line under it, then any buttons and the switch itself
+    const toggleRow = (key, lead, title, sub, ...extra) => {
+      const c = h('input', { type: 'checkbox', class: 'sw', 'aria-label': title }); c.checked = !!a[key];
       c.addEventListener('change', () => { a[key] = c.checked; save(['alerts']); if (key === 'sound' && c.checked) ensureAudio(); });
-      return h('label', { class: 'chk' }, c, text);
+      return h('div', { class: 'opt' }, lead, h('div', { class: 'txt' }, h('span', { class: 't' }, title), sub ? h('span', { class: 's' }, sub) : null), h('div', { class: 'end' }, ...extra, c));
     };
+    const dot = (colour) => h('span', { class: 'dot', style: `background:var(${colour})` });
+    const card = (id, title, hint, ...kids) => h('section', { class: 'card', id: 'set-' + id }, h('h3', {}, title), hint ? h('p', { class: 'hint' }, hint) : null, ...kids);
     // masked like a password: a webhook URL is a posting credential for that channel
-    const webhook = h('input', { type: 'password', placeholder: 'https://discord.com/api/webhooks/…', spellcheck: 'false', autocomplete: 'off' });
+    const webhook = h('input', { type: 'password', class: 'input', placeholder: 'https://discord.com/api/webhooks/…', spellcheck: 'false', autocomplete: 'off', 'aria-label': 'Discord webhook URL' });
     webhook.value = a.discord || '';
     webhook.addEventListener('change', () => { a.discord = webhook.value.trim(); save(['alerts']); });
-    const showBtn = h('button', { class: 'btn quiet' }, 'Show');
+    const showBtn = h('button', { class: 'btn' }, 'Show');
     showBtn.addEventListener('click', () => { const hidden = webhook.type === 'password'; webhook.type = hidden ? 'text' : 'password'; showBtn.textContent = hidden ? 'Hide' : 'Show'; });
-    const discordMsg = h('span', { class: 'fld-h', style: 'grid-column:auto' });
-    const discordTest = h('button', { class: 'btn quiet' }, 'Test Discord');
+    const discordMsg = h('span', { class: 'msg' });
+    const discordTest = h('button', { class: 'btn' }, 'Test');
     discordTest.addEventListener('click', async () => {
       a.discord = webhook.value.trim(); save(['alerts']);
       if (!a.discord) { discordMsg.textContent = 'No webhook URL'; return; }
@@ -816,8 +925,8 @@
       const r = await postDiscord('TestPirate', { severe_count: 1, banned_xuids: ['test'], manual_tags: [{ tooltip: 'Test alert' }] }, 'severe', SOTREP);
       discordMsg.textContent = r.ok ? 'Posted to Discord' : r.error;
     });
-    const diagMsg = h('span', { class: 'fld-h', style: 'grid-column:auto' });
-    const diagBtn = h('button', { class: 'btn quiet' }, 'Test sotrep');
+    const diagMsg = h('span', { class: 'msg' });
+    const diagBtn = h('button', { class: 'btn' }, 'Run test');
     diagBtn.addEventListener('click', async () => {
       // looks up whoever is signed in on this browser, so no gamertag is written into the script
       const own = myGamertag();
@@ -828,11 +937,11 @@
       const ms = Date.now() - t0;
       diagMsg.textContent = r.error ? `${ms} ms: ${r.error}` : `${ms} ms: ok, signed in and sotrep.com answered`;
     });
-    const soundTest = h('button', { class: 'btn quiet' }, 'Test sound');
-    soundTest.addEventListener('click', () => playChime('severe'));
-    const twBox = h('input', { type: 'text', placeholder: 'twitch channel name', spellcheck: 'false', autocomplete: 'off', style: 'max-width:220px' });
-    const twMsg = h('span', { class: 'fld-h', style: 'grid-column:auto' });
-    const twTest = h('button', { class: 'btn quiet' }, 'Check Twitch');
+    const soundTest = h('button', { class: 'btn' }, 'Test');
+    soundTest.addEventListener('click', (e) => { e.preventDefault(); playChime('severe'); });
+    const twBox = h('input', { type: 'text', class: 'input', placeholder: 'twitch channel name', spellcheck: 'false', autocomplete: 'off', 'aria-label': 'Twitch channel to check' });
+    const twMsg = h('span', { class: 'msg' });
+    const twTest = h('button', { class: 'btn' }, 'Check Twitch');
     const runTw = async () => {
       const login = twBox.value.trim().replace(/^@/, '').replace(/^.*twitch\.tv\//, '').toLowerCase();
       if (!login) return;
@@ -844,9 +953,9 @@
     twTest.addEventListener('click', runTw);
     twBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') runTw(); });
 
-    const testMsg = h('div', { class: 'fld-h' });
+    const testMsg = h('span', { class: 'msg' });
     const fakeRep = { severe_count: 1, banned_xuids: ['test'], manual_tags: [{ tooltip: 'Test alert' }], profile_id: null };
-    const testAll = h('button', { class: 'btn' }, 'Test alerts');
+    const testAll = h('button', { class: 'btn primary' }, 'Test alerts');
     testAll.addEventListener('click', async () => {
       testMsg.textContent = 'Testing…';
       const parts = [];
@@ -855,14 +964,14 @@
       if (a.discord) { const r = await postDiscord('TestPirate', fakeRep, 'severe', SOTREP); parts.push(r.ok ? 'Discord ok' : 'Discord: ' + r.error); }
       testMsg.textContent = parts.length ? parts.join(' · ') : 'Nothing enabled';
     });
-    const desktopBtn = h('button', { class: 'btn quiet' }, 'Allow desktop notifications');
+    const desktopBtn = h('button', { class: 'btn' }, 'Allow');
     desktopBtn.addEventListener('click', async () => {
       try { const p = await Notification.requestPermission(); testMsg.textContent = 'Desktop notifications: ' + p; } catch (e) { testMsg.textContent = 'Not available in this browser'; }
     });
 
     const themeCtl = segmented([['dark', 'Dark'], ['light', 'Light'], ['auto', 'Match device']], state.ui.theme, (v) => { state.ui.theme = v; save(['ui']); applyDisplay(); });
     const layoutCtl = segmented([['comfortable', 'Comfortable'], ['compact', 'Compact']], state.ui.layout, (v) => { state.ui.layout = v; save(['ui']); applyDisplay(); });
-    const backupMsg = h('span', { class: 'fld-h', style: 'grid-column:auto' });
+    const backupMsg = h('span', { class: 'msg' });
     const exportBtn = h('button', { class: 'btn' }, 'Export backup');
     exportBtn.addEventListener('click', () => { backupMsg.textContent = exportBackup(); });
     const fileIn = h('input', { type: 'file', accept: '.json,application/json', style: 'display:none' });
@@ -879,28 +988,55 @@
       backupMsg.textContent = `Imported: ${r.added} new, ${r.updated} updated`;
       render();
     });
+    const clearMsg = h('span', { class: 'msg' });
+    const clearBtn = h('button', { class: 'btn danger', title: 'Clear the Recent board. Names stay remembered so they are not treated as new again.' }, 'Clear board');
+    clearBtn.addEventListener('click', () => { clearSession(); clearMsg.textContent = 'Recent board cleared'; });
+    const resetBtn = twoPress('Reset everything', 'Press again to reset', 'btn danger', () => { resetAll(); clearMsg.textContent = 'Everything reset, taking a new baseline'; }, 'Forget all remembered names and cached lookups and re-baseline. Press twice.');
+
+    const sections = [
+      card('alerts', 'Alert me when I meet', 'Any mix. Turn off the first two for a Twitch only watch. Alerts never fire for names you look up by hand.',
+        toggleRow('severe', dot('--c-sev'), 'Red players', 'Severe flags or banned accounts'),
+        toggleRow('moderate', dot('--c-mod'), 'Orange players', 'Moderate flags'),
+        toggleRow('streamers', dot('--c-tw'), 'Streamers live now', 'A linked Twitch channel that is live. Checked when they appear and every 5 minutes on the Recent board.'),
+        h('div', { class: 'field' }, twBox, twTest),
+        twMsg,
+        h('p', { class: 'hint' }, 'Type any Twitch channel to test the live check. A live one also fires the streamer alert.'),
+      ),
+      card('where', 'Where alerts go', 'The chime works with the game in front. Desktop notifications hide behind a full screen game.',
+        toggleRow('sound', icon('sound', 18), 'Chime in this tab', 'No permissions needed', soundTest),
+        h('div', { class: 'opt' }, icon('chat', 18),
+          h('div', { class: 'txt' }, h('span', { class: 't' }, 'Discord webhook'), h('span', { class: 's' }, 'Flagged players are posted to a private channel with the rep and a profile link')),
+          h('div', { class: 'full' }, webhook, showBtn, discordTest), discordMsg),
+        toggleRow('desktop', icon('screen', 18), 'Desktop notification', 'Best on a second screen', desktopBtn),
+        h('div', { class: 'field' }, testAll, testMsg),
+      ),
+      card('display', 'Display', null,
+        h('div', { class: 'setrow' }, h('span', {}, 'Theme'), themeCtl),
+        h('div', { class: 'setrow' }, h('span', {}, 'Layout', h('span', { class: 'hint' }, 'Compact fits more players on screen')), layoutCtl),
+      ),
+      card('data', 'Your data', 'Everything this tool remembers (who you met, lookups, settings) lives in Tampermonkey in this browser only. Export saves it to a file you keep. Import adds a backup back in and keeps the newer entry on a clash. Your Discord webhook is never put in the file.',
+        h('div', { class: 'field' }, exportBtn, importBtn, fileIn), backupMsg,
+        h('div', { class: 'dzone' },
+          h('span', { class: 'lbl' }, 'Danger zone'),
+          h('div', { class: 'setrow' }, h('span', { class: 'hint' }, 'Empty the Recent board. Everyone stays remembered, so they are not treated as new again.'), clearBtn),
+          h('div', { class: 'setrow' }, h('span', { class: 'hint' }, 'Forget everyone you have met and every lookup, then take a new baseline. Settings are kept.'), resetBtn),
+          clearMsg),
+      ),
+      card('diag', 'Diagnostics', 'For when rows sit on "queued" or show refusals.',
+        h('div', { class: 'opt' }, icon('pulse', 18), h('div', { class: 'txt' }, h('span', { class: 't' }, 'sotrep.com connection'), h('span', { class: 's' }, 'One lookup of your own gamertag, with the result and timing')), h('div', { class: 'end' }, diagBtn)),
+        diagMsg,
+      ),
+    ];
+    const jump = (label, id) => h('button', { onclick: () => { const el = sections.find(s => s.id === 'set-' + id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, label);
     panelEl = h('div', { class: 'panel', style: 'display:none' },
-      h('div', { class: 'panel-head' }, h('div', { class: 'panel-t' }, 'Settings'), h('button', { class: 'btn', onclick: () => setSettings(false) }, 'Close')),
-      h('div', { class: 'panel-t' }, 'Alerts'),
-      field('Alert on', h('div', { class: 'stack' },
-        check('severe', 'Red: severe flags or banned accounts'),
-        check('moderate', 'Orange: moderate flags'),
-        check('streamers', 'Purple: streamer with a linked Twitch channel who is live right now'),
-      ), 'Any mix. Untick the first two for a Twitch-only watch. Streamers are checked against Twitch when they appear and every 5 minutes while on the Recent board; offline streamers just show their Twitch link.'),
-      field('', h('div', { class: 'row-ctl' }, twBox, twTest, twMsg), 'Type any Twitch channel to test the live check. A live one also fires the streamer alert.'),
-      field('Sound', h('div', { class: 'row-ctl' }, check('sound', 'Play a chime in this tab (works with the game in front, no permissions needed)'), soundTest)),
-      field('Discord', h('div', { class: 'row-ctl wide' }, webhook, showBtn, discordTest, discordMsg), 'Paste a webhook URL for a private channel. Flagged players get posted there with the rep and a profile link.'),
-      field('Desktop', h('div', { class: 'row-ctl' }, check('desktop', 'Windows notification'), desktopBtn), 'Hidden behind a full-screen game; useful on a second screen only.'),
-      h('div', { class: 'row-ctl' }, testAll, testMsg),
-      field('Connection', h('div', { class: 'row-ctl' }, diagBtn, diagMsg), 'One lookup of your own gamertag against sotrep.com with the result and timing, for when rows sit on "queued" or show refusals.'),
-      h('div', { class: 'panel-t' }, 'Display'),
-      field('Theme', themeCtl),
-      field('Layout', layoutCtl, 'Compact fits more players on screen.'),
-      h('div', { class: 'panel-t' }, 'Your data'),
-      field('Backup', h('div', { class: 'row-ctl' }, exportBtn, importBtn, fileIn, backupMsg), 'Everything this tool remembers (who you met, lookups, settings) lives in Tampermonkey in this browser only. Export saves it to a file you keep. Import adds a backup back in and keeps the newer entry on a clash. Your Discord webhook is never put in the file.'),
+      h('div', { class: 'panel-head' }, h('h2', {}, 'Settings'), h('button', { class: 'btn', onclick: () => setSettings(false) }, icon('close', 14, 2.4), 'Close settings')),
+      h('nav', { class: 'snav', 'aria-label': 'Settings sections' },
+        jump('Alerts', 'alerts'), jump('Where alerts go', 'where'), jump('Display', 'display'), jump('Your data', 'data'), jump('Diagnostics', 'diag')),
+      h('div', { class: 'cards' }, h('div', { class: 'col' }, sections[0], sections[1]), h('div', { class: 'col' }, sections[2], sections[3], sections[4])),
     );
     return panelEl;
   }
+  let tabCounts = {}, chipCounts = {};
   function buildUI() {
     const host = document.createElement('div');
     host.id = 'sotrep-live-host';
@@ -909,53 +1045,67 @@
 
     statusEl = h('span', { class: 'status' }, h('span', { class: 'dot' }), 'Starting…');
 
-    nameBox = h('input', { type: 'text', placeholder: 'Check a gamertag', spellcheck: 'false', autocomplete: 'off' });
+    nameBox = h('input', { type: 'text', placeholder: 'Check a gamertag', spellcheck: 'false', autocomplete: 'off', 'aria-label': 'Check a gamertag' });
     nameBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') checkName(); });
 
-    const alertsBtn = h('button', { class: 'btn quiet', title: 'Settings' }, 'Settings');
-    // one way in, four ways out: the button (which says Close settings while open), the Close button in the panel, Esc, or a tab
+    const alertsBtn = h('button', { class: 'btn icon', title: 'Settings', 'aria-label': 'Settings', 'aria-pressed': 'false' }, icon('gear', 18));
+    // one way in, four ways out: the gear button, the Close settings button in the panel, Esc, or a tab.
+    // Settings takes the place of the board while open.
     setSettings = (open) => {
       panelEl.style.display = open ? '' : 'none';
+      listEl.style.display = open ? 'none' : '';
+      filterEl.style.display = !open && session.view === 'history' ? '' : 'none';
       alertsBtn.classList.toggle('on', open);
-      alertsBtn.textContent = open ? 'Close settings' : 'Settings';
+      alertsBtn.setAttribute('aria-pressed', String(open));
       if (open) rootEl.scrollTo(0, 0);
     };
     alertsBtn.addEventListener('click', () => setSettings(panelEl.style.display === 'none'));
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && panelEl.style.display !== 'none') setSettings(false); });
 
-    const tabRecent = h('button', { class: 'tab on', onclick: () => { setSettings(false); setView('recent'); } }, 'Recent');
-    const tabHistory = h('button', { class: 'tab', onclick: () => { setSettings(false); setView('history'); } }, 'History');
+    tabCounts = { recent: h('span', { class: 'count' }), history: h('span', { class: 'count' }) };
+    const tabRecent = h('button', { class: 'tab on', onclick: () => { setSettings(false); setView('recent'); } }, 'Recent', tabCounts.recent);
+    const tabHistory = h('button', { class: 'tab', onclick: () => { setSettings(false); setView('history'); } }, 'History', tabCounts.history);
     session.setView = (v) => { session.view = v; tabRecent.classList.toggle('on', v === 'recent'); tabHistory.classList.toggle('on', v === 'history'); filterEl.style.display = v === 'history' ? '' : 'none'; render(); };
 
     versionEl = h('a', { class: 'ver', href: RAW_URL, target: '_blank', rel: 'noopener', title: 'Click to update or reinstall through Tampermonkey', onclick: armReloadOnReturn }, 'v' + MY_VERSION);
     const bar = h('div', { class: 'bar' },
-      h('div', { class: 'brand' }, 'SOTREP ', h('b', {}, 'Live'), versionEl),
-      h('div', { class: 'tabs' }, tabRecent, tabHistory),
-      statusEl,
-      (meEl = h('span', { class: 'me', style: 'display:none' })),
+      h('div', { class: 'brand' }, icon('shield', 24), h('span', {}, 'SOTREP ', h('b', {}, 'Live')), versionEl),
+      h('nav', { class: 'nav', 'aria-label': 'Views' }, tabRecent, tabHistory),
+      h('div', { class: 'info' }, statusEl, (meEl = h('span', { class: 'me', style: 'display:none' }))),
       h('div', { class: 'controls' },
-        h('div', { class: 'search' }, nameBox, h('button', { onclick: checkName }, 'Check')),
+        h('label', { class: 'search' }, icon('search', 16), nameBox),
+        h('button', { class: 'btn primary', onclick: checkName }, 'Check'),
         alertsBtn,
-        h('button', { class: 'btn quiet', onclick: clearSession, title: 'Clear the Recent board. Names stay remembered so they are not treated as new again.' }, 'Clear'),
-        twoPress('Reset', 'Really reset?', 'btn quiet', resetAll, 'Forget all remembered names and cached lookups and re-baseline. Press twice.'),
       ),
     );
     listEl = h('div', { class: 'list' });
     bannerEl = h('div', { class: 'banner', style: 'display:none' });
     newsEl = h('div', { class: 'news', style: 'display:none' });
     // History filters live outside the list so typing is not interrupted when the board redraws
-    const histBox = h('input', { type: 'text', placeholder: 'Search name, social or tag', spellcheck: 'false', autocomplete: 'off' });
+    const histBox = h('input', { type: 'text', placeholder: 'Search name, social or tag', spellcheck: 'false', autocomplete: 'off', 'aria-label': 'Search History' });
     histBox.addEventListener('input', () => { session.hist.q = histBox.value.trim(); render(); });
     const histToggle = (label, key) => {
       const c = h('input', { type: 'checkbox' });
       c.addEventListener('change', () => { session.hist[key] = c.checked; render(); });
       return h('label', { class: 'toggle' }, c, label);
     };
+    const chips = [['all', 'All', null], ['red', 'Red', '--c-sev'], ['orange', 'Orange', '--c-mod'], ['yellow', 'Yellow', '--c-lt'], ['green', 'Green', '--c-ok'], ['unchecked', 'Not checked', '--c-l3']].map(([v, label, colour]) => {
+      chipCounts[v] = h('span', { class: 'n' });
+      const b = h('button', { class: 'fchip' + (v === 'all' ? ' on' : ''), 'aria-pressed': String(v === 'all') },
+        colour ? h('span', { class: 'dot', style: `background:var(${colour})` }) : null, label, chipCounts[v]);
+      b.addEventListener('click', () => {
+        session.hist.colour = v;
+        for (const o of chipRow.children) { const on = o === b; o.classList.toggle('on', on); o.setAttribute('aria-pressed', String(on)); }
+        render();
+      });
+      return b;
+    });
+    const chipRow = h('div', { class: 'fchips', role: 'group', 'aria-label': 'Reputation' }, chips);
     filterEl = h('div', { class: 'filters', style: 'display:none' },
-      h('div', { class: 'search' }, histBox),
-      segmented([['all', 'All'], ['red', 'Red'], ['orange', 'Orange'], ['yellow', 'Yellow'], ['green', 'Green'], ['unchecked', 'Not checked']], 'all', (v) => { session.hist.colour = v; render(); }),
+      h('label', { class: 'search' }, icon('search', 16), histBox),
+      chipRow,
       histToggle('Streamers', 'streamers'), histToggle('Met more than once', 'repeat'),
-      (filterCount = h('span', { class: 'count' })),
+      (filterCount = h('span', { class: 'fcount' })),
     );
     const root = h('div', { class: 'root' }, bar, bannerEl, newsEl, buildAlertsPanel(), filterEl, listEl);
     rootEl = root;
@@ -1042,6 +1192,9 @@
 
   function render() {
     listEl.replaceChildren();
+    tabCounts.recent.textContent = session.order.length;
+    tabCounts.history.textContent = Object.keys(state.seen).length;
+    listEl.classList.toggle('hist', session.view === 'history');
     if (session.view === 'history') return renderHistory();
     const recap = sessionRecap();
     if (recap) listEl.append(recap);
@@ -1051,13 +1204,14 @@
         : 'Taking baseline…'));
       return;
     }
-    listEl.append(h('div', { class: 'section' }, 'Recent encounters', h('span', {}, session.order.length)));
+    listEl.append(h('div', { class: 'section' }, 'Recent encounters', h('span', {}, session.order.length), h('span', { class: 'note' }, 'Newest first')));
     for (const gt of session.order) listEl.append(renderRow(gt, false));
   }
 
   // ---------- session recap ----------
   // A session is a run of meetings with no gap over 90 minutes, ending at the latest one. Built from the meeting log.
   const flagScore = (rep) => ((rep.severe_count | 0) + (rep.banned_xuids || []).length) * 100 + (rep.moderate_count | 0) * 10 + (rep.light_count | 0);
+  const profileLink = (rep) => rep && rep.profile_id ? `${SOTREP}/search/${rep.profile_id}` : SOTREP + '/';
   function sessionRecap() {
     const hits = [];
     for (const gt of Object.keys(state.seen)) for (const t of meetList(gt)) hits.push([Date.parse(t), gt]);
@@ -1071,7 +1225,7 @@
       start = t; prev = t; members.add(gt);
     }
     const n = { red: 0, orange: 0, yellow: 0, clean: 0, unchecked: 0 };
-    let again = 0, streamers = 0, liveNow = 0, wasLive = 0, worst = null, best = null;
+    let again = 0, streamers = 0, liveNow = 0, wasLive = 0, worst = null, best = null, onAir = null;
     for (const gt of members) {
       if (meetList(gt).some(t => Date.parse(t) < start)) again++;
       const e = state.cache[gt], rep = e && e.rep;
@@ -1082,7 +1236,7 @@
       if (login) {
         streamers++;
         const lv = liveEntry(login);
-        if (lv && lv.live && liveFresh(login)) liveNow++;
+        if (lv && lv.live && liveFresh(login)) { liveNow++; if (!onAir) onAir = { gt, rep, lv }; }
         else if (state.lives[gt] && Date.parse(state.lives[gt]) >= start - 60e3) wasLive++;
       }
       const score = flagScore(rep);
@@ -1093,29 +1247,42 @@
     const mins = Math.max(1, Math.round((end - start) / 60e3));
     const len = mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`;
     const live = Date.now() - end < 3 * 3600e3;
-    const chip = (cls, text) => h('span', { class: 'tag ' + cls }, text);
-    const who = (label, o, extra) => h('span', {}, label + ' ', h('a', { class: 'name', href: o.rep.profile_id ? `${SOTREP}/search/${o.rep.profile_id}` : SOTREP + '/', target: '_blank', rel: 'noopener' }, o.gt), ' ' + extra);
-    return h('div', { class: 'recap' },
-      h('div', { class: 'recap-t' }, h('b', {}, live ? 'This session' : `Last session, ${dayLabel(new Date(end)).toLowerCase()}`),
-        `${hm(start)} to ${hm(end)}, ${len}`, h('span', {}, `${members.size} player${members.size > 1 ? 's' : ''}`)),
-      h('div', { class: 'meta' },
-        n.red ? chip('red', `${n.red} red`) : null,
-        n.orange ? chip('amber', `${n.orange} orange`) : null,
-        n.yellow ? chip('', `${n.yellow} yellow`) : null,
-        n.clean ? chip('green', `${n.clean} clean`) : null,
-        n.unchecked ? chip('', `${n.unchecked} not checked`) : null,
-        again ? chip('met', `${again} met before`) : null,
-        streamers ? chip('', `${streamers} with a Twitch channel`) : null,
-        liveNow ? h('span', { class: 'tag live' }, `${liveNow} LIVE now`) : null,
-        wasLive ? chip('', `${wasLive} was live`) : null,
-        worst ? who('Worst:', worst, `(${repLabel(worst.rep)})`) : null,
-        best ? who('Best:', best, `(${tagName(best.rep.badges[0])})`) : null,
+    const parts = [['red', '--c-sev'], ['orange', '--c-mod'], ['yellow', '--c-lt'], ['clean', '--c-ok'], ['unchecked', '--c-l3']].filter(([k]) => n[k]);
+    const key = (k, colour) => h('span', { class: 'k' }, h('span', { class: 'dot', style: `background:var(${colour})` }), h('b', {}, n[k]), ' ' + (k === 'unchecked' ? 'not checked' : k));
+    const nameLink = (o, href) => h('a', { class: 'name', href, target: '_blank', rel: 'noopener' }, o.gt);
+    const card = (cls, label, o, href, sub) => h('div', { class: 'hl ' + cls }, h('span', { class: 'lbl' }, label), nameLink(o, href), h('span', { class: 'sub', title: sub }, sub));
+    const extras = [
+      again ? `${again} met before` : null,
+      streamers ? `${streamers} with a Twitch channel` : null,
+      wasLive ? `${wasLive} was live` : null,
+    ].filter(Boolean);
+    return h('section', { class: 'recap', 'aria-label': live ? 'This session' : 'Last session' },
+      h('div', { class: 'recap-a' },
+        h('span', { class: 'lbl' }, live ? 'This session' : `Last session, ${dayLabel(new Date(end)).toLowerCase()}`),
+        h('span', { class: 'big' }, `${members.size} player${members.size > 1 ? 's' : ''}`),
+        h('span', { class: 'sub' }, `${hm(start)} to ${hm(end)}, ${len}`)),
+      h('div', { class: 'recap-b' },
+        h('div', { class: 'riskbar', role: 'img', 'aria-label': parts.map(([k]) => `${n[k]} ${k === 'unchecked' ? 'not checked' : k}`).join(', ') },
+          parts.map(([k, colour]) => h('span', { style: `flex:${n[k]};background:var(${colour})` }))),
+        h('div', { class: 'legend' }, parts.map(([k, colour]) => key(k, colour)),
+          extras.length ? h('span', { class: 'x' }, extras.join(' · ')) : null,
+          liveNow ? h('span', { class: 'tag live' }, `${liveNow} LIVE now`) : null),
       ),
+      (worst || onAir || best) ? h('div', { class: 'recap-c' },
+        worst ? card('bad', 'Watch out', worst, profileLink(worst.rep), repLabel(worst.rep)) : null,
+        onAir ? card('tw', 'Live on Twitch', onAir, onAir.lv.url, onAir.lv.title || 'Streaming now') : null,
+        !onAir && best ? card('good', 'Best of the session', best, profileLink(best.rep), tagName(best.rep.badges[0])) : null,
+      ) : null,
     );
   }
 
   // ---------- History search and filters ----------
   const filtersActive = () => { const f = session.hist; return !!(f.q || f.colour !== 'all' || f.streamers || f.repeat); };
+  const histColour = (gt) => {
+    const e = state.cache[gt], rep = e && e.rep;
+    if (!rep || rep.error) return 'unchecked';
+    return { severe: 'red', moderate: 'orange', light: 'yellow', clean: 'green' }[repClass(rep)] || 'unchecked';
+  };
   function histMatch(gt) {
     const f = session.hist, e = state.cache[gt], rep = e && e.rep;
     const ok = !!rep && !rep.error;
@@ -1123,27 +1290,24 @@
       const hay = [gt, ...(ok ? [...(rep.socials || []).map(x => x && x.username), ...(rep.manual_tags || []).map(tagName), ...(rep.badges || []).map(tagName)] : [])];
       if (!hay.some(x => x && String(x).toLowerCase().includes(f.q.toLowerCase()))) return false;
     }
-    if (f.colour !== 'all') {
-      const cls = ok ? repClass(rep) : 'unchecked';
-      if ({ red: 'severe', orange: 'moderate', yellow: 'light', green: 'clean', unchecked: 'unchecked' }[f.colour] !== cls) return false;
-    }
+    if (f.colour !== 'all' && histColour(gt) !== f.colour) return false;
     if (f.streamers && !(ok && twitchLogin(rep))) return false;
     if (f.repeat && meetList(gt).length < 2) return false;
     return true;
   }
 
   // A folded group of rows, drawn only while open. The poll re-renders, so each fold remembers its own state.
-  function fold(key, title, entries, sortByName, force) {
+  function fold(box, key, title, entries, sortByName, force) {
     session.folds = session.folds || {};
     const open = force || !!session.folds[key];
-    const head = h('div', { class: 'section fold' }, title, h('span', {}, entries.length), force ? null : h('span', { class: 'hint' }, open ? 'hide' : 'show'));
-    head.addEventListener('click', () => { session.folds[key] = !open; render(); });
-    listEl.append(head);
+    const head = h('div', { class: 'tsec fold', role: 'button', tabindex: '0', 'aria-expanded': String(open) }, title, h('span', {}, entries.length), force ? null : h('span', { class: 'hint' }, open ? 'Hide' : `Show ${entries.length}`));
+    const flip = () => { session.folds[key] = !open; render(); };
+    head.addEventListener('click', flip);
+    head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } });
+    box.append(head);
     if (!open) return;
-    const body = h('div', { class: 'grid' });
     const rows = sortByName ? [...entries].sort((a, b) => a[0].localeCompare(b[0])) : entries;
-    for (const [gt] of rows) body.append(renderRow(gt, true));
-    listEl.append(body);
+    for (const [gt] of rows) box.append(renderRow(gt, true));
   }
 
   const HISTORY_OPEN_DAYS = 30;   // older encounters sit in a fold so History stays quick to draw
@@ -1151,6 +1315,9 @@
     const base = baselineStamp();
     const all = Object.entries(state.seen).sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]));
     const cutoff = Date.now() - HISTORY_OPEN_DAYS * 864e5;
+    const tally = { all: all.length, red: 0, orange: 0, yellow: 0, green: 0, unchecked: 0 };
+    for (const [gt] of all) tally[histColour(gt)]++;
+    for (const [k, el] of Object.entries(chipCounts)) el.textContent = tally[k] || 0;
     if (!all.length) { filterCount.textContent = ''; listEl.append(h('div', { class: 'empty' }, 'Nothing recorded yet.')); return; }
     const active = filtersActive();
     const shown = active ? all.filter(([gt]) => histMatch(gt)) : all;
@@ -1160,23 +1327,34 @@
     const recent = tracked.filter(([, iso]) => Date.parse(iso) >= cutoff);
     const older = tracked.filter(([, iso]) => !(Date.parse(iso) >= cutoff));
     const baseline = shown.filter(([, iso]) => iso === base);
-    let lastDay = null;
+    const box = h('div', { class: 'tin' },
+      h('div', { class: 'hhead', 'aria-hidden': 'true' }, h('span', {}, 'Player'), h('span', {}, 'Reputation'), h('span', {}, 'Met'), h('span', {}, 'Tags and socials'), h('span', {}, 'Last met')));
+    let lastDay = null, dayHead = null, dayN = 0;
     for (const [gt, iso] of recent) {
       const day = dayLabel(new Date(iso));
-      if (day !== lastDay) { listEl.append(h('div', { class: 'section' }, day)); lastDay = day; }
-      listEl.append(renderRow(gt, true));
+      if (day !== lastDay) {
+        if (dayHead) dayHead.lastChild.textContent = `${dayN}`;
+        dayHead = h('div', { class: 'tsec' }, day, h('span', {}));
+        box.append(dayHead); lastDay = day; dayN = 0;
+      }
+      dayN++;
+      box.append(renderRow(gt, true));
     }
-    if (older.length) fold('older', `Older than ${HISTORY_OPEN_DAYS} days`, older, false, active);
-    if (baseline.length) fold('baseline', 'Met before tracking started', baseline, true, active);
+    if (dayHead) dayHead.lastChild.textContent = `${dayN}`;
+    if (older.length) fold(box, 'older', `Older than ${HISTORY_OPEN_DAYS} days`, older, false, active);
+    if (baseline.length) fold(box, 'baseline', 'Met before tracking started', baseline, true, active);
+    listEl.append(h('div', { class: 'table' }, box));
   }
 
-  function renderRow(gt, withLookupBtn) {
+  // The reputation badge: a shape for each level as well as a colour, so red and orange differ for everyone
+  const REP_ICON = { severe: 'severe', moderate: 'moderate', light: 'light', clean: 'clean' };
+  function renderRow(gt, inHistory) {
     {
       const cur = session.current.get(gt);
       const entry = state.cache[gt];
       const rep = entry && entry.rep;
       const cls = repClass(rep);
-      const link = rep && rep.profile_id ? `${SOTREP}/search/${rep.profile_id}` : `${SOTREP}/`;
+      const link = profileLink(rep);
 
       const tags = [];
       const socials = [];
@@ -1205,11 +1383,11 @@
       }
 
       const times = meetList(gt);
-      const metBadge = times.length >= 2 ? (() => {
+      const timesTitle = times.length ? 'Met ' + times.map(t => new Date(t).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })).join(', ') : '';
+      const metBadge = !inHistory && times.length >= 2 ? (() => {
         const d = dayLabel(new Date(times[times.length - 2]));
         const when = d === 'Today' ? 'earlier today' : d === 'Yesterday' ? 'yesterday' : d;
-        return h('span', { class: 'tag met', title: 'Met ' + times.map(t => new Date(t).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })).join(', ') },
-          `met ${times.length} times, before that ${when}`);
+        return h('span', { class: 'tag met', title: timesTitle }, `met ${times.length} times, before that ${when}`);
       })() : null;
       const pic = (cur && cur.DisplayPicUrl) || (rep && rep.gamerpic_url) || '';
       // Rare passes on Xbox Live presence as your account sees it. "Offline" would be misleading on a board of
@@ -1221,23 +1399,38 @@
       const first = state.seen[gt] ? new Date(state.seen[gt]) : null;
       const queued = session.queue.includes(gt);
       // In history, unchecked names are not looked up automatically; offer a button instead
-      const needsLookup = withLookupBtn && !entry && !queued;
+      const needsLookup = inHistory && !entry && !queued;
       const repText = needsLookup ? 'not checked' : queued && !entry ? 'queued…' : repLabel(rep);
+      const shape = !needsLookup && REP_ICON[cls];
 
-      return h('div', { class: 'row ' + (needsLookup ? 'unchecked' : cls) },
-        pic ? h('img', { class: 'pic', src: pic, alt: '' }) : h('div', { class: 'pic' }, gt.trim().charAt(0).toUpperCase()),
+      const picEl = pic ? h('img', { class: 'pic', src: pic, alt: '' }) : h('div', { class: 'pic', 'aria-hidden': 'true' }, gt.trim().charAt(0).toUpperCase());
+      const nameEl = h('a', { class: 'name', href: link, target: '_blank', rel: 'noopener' }, gt);
+      const repEl = h('span', { class: 'rep' }, shape ? icon(shape, 13, 2.4) : null, repText);
+      const actions = [
+        needsLookup ? h('button', { class: 'mini', onclick: () => { session.manual.add(gt); enqueue(gt, true); render(); } }, 'Look up') : null,
+        rep && rep.error ? h('button', { class: 'mini', onclick: () => { delete state.cache[gt]; save(['cache']); enqueue(gt, true); render(); } }, 'Retry') : null,
+      ];
+      const rowCls = 'row ' + (needsLookup ? 'unchecked' : cls);
+
+      if (inHistory) {
+        return h('div', { class: rowCls + ' hrow' },
+          h('div', { class: 'who' }, picEl, nameEl),
+          h('div', { class: 'line' }, repEl, actions),
+          h('span', { class: 'times', title: timesTitle }, times.length ? `${times.length} time${times.length > 1 ? 's' : ''}` : ''),
+          h('div', { class: 'meta' }, tags, socials),
+          h('span', { class: 'when', title: presence[2] }, first ? first.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''),
+        );
+      }
+      return h('div', { class: rowCls },
+        picEl,
         h('div', { class: 'main' },
-          h('div', { class: 'line' },
-            h('a', { class: 'name', href: link, target: '_blank', rel: 'noopener' }, gt),
-            h('span', { class: 'rep' }, repText),
-            needsLookup ? h('button', { class: 'mini', onclick: () => { session.manual.add(gt); enqueue(gt, true); render(); } }, 'Look up') : null,
-            rep && rep.error ? h('button', { class: 'mini', onclick: () => { delete state.cache[gt]; save(['cache']); enqueue(gt, true); render(); } }, 'Retry') : null,
-          ),
+          h('div', { class: 'line' }, nameEl, repEl, actions),
           (tags.length || socials.length || metBadge) ? h('div', { class: 'meta' }, metBadge, tags, socials.length ? h('span', { class: 'social' }, socials) : null) : null,
         ),
         h('div', { class: 'side', title: presence[2] },
-          presence[1] ? h('div', { class: 'pres ' + presence[0] }, presence[1]) : null,
-          first ? h('div', {}, (withLookupBtn ? '' : 'met ') + (withLookupBtn ? first.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : first.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))) : null,
+          presence[1] ? h('span', { class: 'pres ' + presence[0] }, presence[0] ? h('span', { class: 'dot' }) : null, presence[1]) : null,
+          first ? h('span', {}, 'met ' + first.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })) : null,
+          rep && rep.profile_id ? h('a', { class: 'prof', href: link, target: '_blank', rel: 'noopener' }, 'SoT Rep profile') : null,
         ),
       );
     }
