@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      2.0.0
+// @version      2.0.1
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js
@@ -113,6 +113,7 @@
     manual: new Set(),  // gamertags looked up by hand (Check box, History button): never alert on these
     live: new Map(),    // twitch login -> { at, live, title, url }
     react: new Map(),   // Xbox ID -> your reactions panel for that player (this page session only)
+    socOpen: new Set(), // gamertags whose full list of socials is open
     liveQueue: [],
     liveBusy: false,
     signedOut: false,       // seaofthieves.com said 401/403: no fast polling; retries on return to the tab, or every SIGNIN_FALLBACK_MS
@@ -295,6 +296,8 @@
     .soc{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px 0 3px;border-radius:6px;border:1px solid var(--c-l2);font-size:12px;color:var(--c-mute);text-decoration:none;white-space:nowrap;max-width:100%;overflow:hidden}
     a.soc{color:var(--c-fg2)}
     a.soc:hover{color:var(--c-fgs);border-color:var(--c-l3)}
+    button.soc.more{all:unset;cursor:pointer;display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;border:1px dashed var(--c-l3);font-size:12px;color:var(--c-acc);white-space:nowrap}
+    button.soc.more:hover{border-style:solid}
     .pbadge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 3px;border-radius:4px;font-size:9.5px;font-weight:700;letter-spacing:.02em;color:#fff;background:var(--c-l3)}
     .pbadge.twitch{background:#9146ff}
     .pbadge.discord{background:#5865f2}
@@ -874,6 +877,9 @@
   // ---------- what's new ----------
   // One short list per release, shown once after an update. A fresh install sees nothing: it has nothing to compare to.
   const WHATS_NEW = {
+    '2.0.1': [
+      'Players with a long list of socials no longer take over the board. Repeats are merged, Twitch comes first, and only a few show until you press +N more on that card.',
+    ],
     '2.0.0': [
       'A fresh look. The session card shows your red, orange, yellow and clean split as a bar, with who to watch out for and who is live on Twitch.',
       'Every player has a reputation badge with its own shape (octagon red, triangle orange, circle yellow, tick clean), so the colours are easy to tell apart, plus a link to their SoT Rep profile.',
@@ -1395,6 +1401,7 @@
 
   // The reputation badge: a shape for each level as well as a colour, so red and orange differ for everyone
   const REP_ICON = { severe: 'severe', moderate: 'moderate', light: 'light', clean: 'clean' };
+  const SOCIALS_CARD = 4, SOCIALS_HISTORY = 3;   // socials shown before "+N more"
   function renderRow(gt, inHistory) {
     {
       const cur = session.current.get(gt);
@@ -1417,8 +1424,16 @@
         if (login && lv && lv.live) tags.unshift(h('a', { class: 'tag live', href: lv.url, target: '_blank', rel: 'noopener', title: lv.title || 'Live on Twitch' }, 'LIVE on Twitch'));
         else if (login && lv && lv.wasLiveAt) tags.unshift(h('a', { class: 'tag wasLive', href: lv.url, target: '_blank', rel: 'noopener', title: 'Was live on Twitch earlier this session' }, `was live ${new Date(lv.wasLiveAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`));
         else if (login && !lv && session.liveQueue.some(q => q.login === login)) tags.push(h('span', { class: 'tag' }, 'checking Twitch…'));
-        const soc = (rep.socials || []).filter(s => s && !s.hidden && s.platform && s.platform !== 'playfab');
-        soc.forEach((s) => {
+        // Some profiles list dozens of socials (often the same Steam entry over and over). Repeats are merged, Twitch
+        // goes first, and only a few show until you open the rest on that card.
+        const seenSoc = new Set();
+        const soc = (rep.socials || []).filter(s => s && !s.hidden && s.platform && s.platform !== 'playfab')
+          .filter((s) => { const k = String(s.platform).toLowerCase() + '|' + String(s.username || s.platform).toLowerCase().trim(); if (seenSoc.has(k)) return false; seenSoc.add(k); return true; })
+          .sort((a, b) => (String(b.platform).toLowerCase() === 'twitch') - (String(a.platform).toLowerCase() === 'twitch'));
+        const cap = inHistory ? SOCIALS_HISTORY : SOCIALS_CARD;
+        const open = session.socOpen.has(gt);
+        const show = open || soc.length <= cap + 1 ? soc : soc.slice(0, cap);
+        show.forEach((s) => {
           const label = s.username || s.platform;
           const p = String(s.platform).toLowerCase();
           const badge = h('span', { class: 'pbadge ' + p, title: s.platform }, PLATFORM_LETTER[p] || p.charAt(0).toUpperCase());
@@ -1427,6 +1442,11 @@
             ? h('a', { class: 'soc', href: s.link, target: '_blank', rel: 'noopener', title: s.platform }, badge, label)
             : h('span', { class: 'soc', title: s.platform }, badge, label));
         });
+        if (show.length < soc.length || open && soc.length > cap + 1) {
+          const flip = () => { if (open) session.socOpen.delete(gt); else session.socOpen.add(gt); render(); };
+          socials.push(h('button', { class: 'soc more', 'aria-expanded': String(open), onclick: flip,
+            title: open ? '' : soc.slice(cap).map(s => s.username || s.platform).join(', ') }, open ? 'Show fewer' : `+${soc.length - cap} more`));
+        }
       }
 
       const times = meetList(gt);
