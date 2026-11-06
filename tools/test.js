@@ -47,6 +47,8 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     check('session card names the live streamer', (await q('.recap .hl.tw').textContent()).includes('Player Two'), 'no live card');
     eq('reputation badges carry a shape', await q('.list .row .rep svg').count(), 6);
     eq('tab counts', [(await q('.nav .tab:has-text("Recent") .count').textContent()), (await q('.nav .tab:has-text("History") .count').textContent())], ['6', '40']);
+    eq('logo links to the project page', [await q('.brand a.home').getAttribute('href'), await q('.brand a.home').getAttribute('target')], ['https://github.com/MrNickIE/sotrep-live', '_blank']);
+    eq('Settings has the project page and issues links', await q('#set-about a').evaluateAll(as => as.map(a => a.getAttribute('href'))), ['https://github.com/MrNickIE/sotrep-live', 'https://github.com/MrNickIE/sotrep-live/issues']);
     eq('no Clear or Reset in the top bar', await q('.bar button:has-text("Clear"), .bar button:has-text("Reset")').count(), 0);
     check('session card counts flags', /1 red/.test(recap) && /1 orange/.test(recap) && /3 clean/.test(recap), recap);
 

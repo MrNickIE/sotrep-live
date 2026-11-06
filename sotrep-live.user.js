@@ -174,6 +174,8 @@
     .brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:16px;letter-spacing:.01em;white-space:nowrap;color:var(--c-fgs)}
     .brand b{color:var(--c-acc);font-weight:700}
     .brand svg{color:var(--c-acc)}
+    .home{display:flex;align-items:center;gap:9px;color:inherit;text-decoration:none;border-radius:6px}
+    .home:hover b{text-decoration:underline}
     .ver{font-size:11px;font-weight:500;color:var(--c-mute);text-decoration:none;padding:2px 8px;border-radius:999px;border:1px solid var(--c-l2)}
     .ver:hover{color:var(--c-fg);border-color:var(--c-l3)}
     .ver.stale{color:var(--c-amb);border-color:var(--c-ambbd);background:var(--c-ambbg)}
@@ -450,6 +452,7 @@
   // latest GitHub release, which GitHub counts, so release download numbers approximate active users.
   const META_URL = 'https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js';
   const RAW_URL = 'https://github.com/MrNickIE/sotrep-live/releases/latest/download/sotrep-live.user.js';
+  const HOME_URL = 'https://github.com/MrNickIE/sotrep-live';
   const MY_VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0';
   function cmpVersion(a, b) {
     const pa = String(a).split('.').map(n => parseInt(n, 10) || 0), pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
@@ -1039,13 +1042,18 @@
         h('div', { class: 'opt' }, icon('pulse', 18), h('div', { class: 'txt' }, h('span', { class: 't' }, 'sotrep.com connection'), h('span', { class: 's' }, 'One lookup of your own gamertag, with the result and timing')), h('div', { class: 'end' }, diagBtn)),
         diagMsg,
       ),
+      card('about', 'About', `SOTREP Live ${MY_VERSION}. An independent personal tool, not affiliated with or endorsed by SoT Rep, Rare or Microsoft.`,
+        h('div', { class: 'field' },
+          h('a', { class: 'btn', href: HOME_URL, target: '_blank', rel: 'noopener' }, 'Project page on GitHub'),
+          h('a', { class: 'btn', href: HOME_URL + '/issues', target: '_blank', rel: 'noopener' }, 'Report a problem')),
+      ),
     ];
     const jump = (label, id) => h('button', { onclick: () => { const el = sections.find(s => s.id === 'set-' + id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, label);
     panelEl = h('div', { class: 'panel', style: 'display:none' },
       h('div', { class: 'panel-head' }, h('h2', {}, 'Settings'), h('button', { class: 'btn', onclick: () => setSettings(false) }, icon('close', 14, 2.4), 'Close settings')),
       h('nav', { class: 'snav', 'aria-label': 'Settings sections' },
-        jump('Alerts', 'alerts'), jump('Where alerts go', 'where'), jump('Display', 'display'), jump('Your data', 'data'), jump('Diagnostics', 'diag')),
-      h('div', { class: 'cards' }, h('div', { class: 'col' }, sections[0], sections[1]), h('div', { class: 'col' }, sections[2], sections[3], sections[4])),
+        jump('Alerts', 'alerts'), jump('Where alerts go', 'where'), jump('Display', 'display'), jump('Your data', 'data'), jump('Diagnostics', 'diag'), jump('About', 'about')),
+      h('div', { class: 'cards' }, h('div', { class: 'col' }, sections[0], sections[1]), h('div', { class: 'col' }, sections[2], sections[3], sections[4], sections[5])),
     );
     return panelEl;
   }
@@ -1082,7 +1090,7 @@
 
     versionEl = h('a', { class: 'ver', href: RAW_URL, target: '_blank', rel: 'noopener', title: 'Click to update or reinstall through Tampermonkey', onclick: armReloadOnReturn }, 'v' + MY_VERSION);
     const bar = h('div', { class: 'bar' },
-      h('div', { class: 'brand' }, icon('shield', 24), h('span', {}, 'SOTREP ', h('b', {}, 'Live')), versionEl),
+      h('div', { class: 'brand' }, h('a', { class: 'home', href: HOME_URL, target: '_blank', rel: 'noopener', title: 'SOTREP Live on GitHub' }, icon('shield', 24), h('span', {}, 'SOTREP ', h('b', {}, 'Live'))), versionEl),
       h('nav', { class: 'nav', 'aria-label': 'Views' }, tabRecent, tabHistory),
       h('div', { class: 'info' }, statusEl, (meEl = h('span', { class: 'me', style: 'display:none' }))),
       h('div', { class: 'controls' },
