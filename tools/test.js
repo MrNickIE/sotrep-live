@@ -142,6 +142,24 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await ctx.close();
   }
 
+  // ----- several streamers live at once -----
+  {
+    const st = demo.store();
+    for (const gt of ['Player Three', 'Player Five', 'Player Six']) st.cache[gt].rep.socials = [{ platform: 'twitch', username: gt.replace(' ', '').toLowerCase(), link: `https://www.twitch.tv/${gt.replace(' ', '').toLowerCase()}` }];
+    const init = `const real = window.GM_xmlhttpRequest; window.GM_xmlhttpRequest = (o) => {
+      if (!o.url.includes('twitch.tv')) return real(o);
+      window.__calls.push(o.url); setTimeout(() => o.onload({ status: 200, responseText: '"isLiveBroadcast":true', responseHeaders: '' }), 20); };`;
+    const { ctx, page, q, errors } = await fresh(browser, st, 'dark', { initScript: init });
+    await page.waitForTimeout(9000);   // four Twitch checks, 2 s apart
+    const card = await q('.recap .hl.tw').textContent();
+    check('live card counts every live streamer', /Live on Twitch \(4\)/.test(card), card);
+    eq('live card names three, then the rest as more', [await q('.recap .hl.tw .name').count(), (await q('.recap .hl.tw .more').textContent()).trim()], [3, '+1 more']);
+    check('each live name links to its stream', (await q('.recap .hl.tw .name').first().getAttribute('href')).includes('twitch.tv/'), 'no link');
+    eq('one live card, not one per streamer', await q('.recap .hl.tw').count(), 1);
+    eq('no page errors with several live', errors, []);
+    await ctx.close();
+  }
+
   // ----- match device theme -----
   {
     const { ctx, page, q } = await fresh(browser, { ...demo.store(), ui: { theme: 'auto', layout: 'comfortable' } }, 'light');

@@ -245,6 +245,19 @@
     .hl.tw .lbl{color:var(--c-tw)}
     .hl.good .lbl{color:var(--c-ok)}
     .hl .sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .hl .lives{color:var(--c-fg2);font-size:13px}
+    .hl .lives .name{font-size:13.5px}
+    .hl .more{color:var(--c-mute);cursor:help;white-space:nowrap}
+    @media (max-width:700px){
+      .recap{padding:14px 16px;gap:12px 24px}
+      .big{font-size:22px}
+      .recap-c{flex:1 1 100%;gap:6px}
+      .hl{flex:1 1 100%;max-width:none;min-width:0;flex-direction:row;flex-wrap:wrap;align-items:baseline;gap:2px 8px;padding:6px 10px;border-radius:8px}
+      .hl .lbl{font-size:10px}
+      .hl .name{font-size:13px}
+      .hl .sub{font-size:12px;flex:1 1 0;min-width:0}
+      .hl.tw .sub{display:none}
+    }
 
     .row{--ring:var(--c-l3);--gap:var(--c-bg1);display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:14px;align-items:start;padding:14px 16px;min-width:0;
       border-radius:12px;background:var(--c-bg1);border:1px solid var(--c-l1)}
@@ -1225,7 +1238,8 @@
       start = t; prev = t; members.add(gt);
     }
     const n = { red: 0, orange: 0, yellow: 0, clean: 0, unchecked: 0 };
-    let again = 0, streamers = 0, liveNow = 0, wasLive = 0, worst = null, best = null, onAir = null;
+    let again = 0, streamers = 0, liveNow = 0, wasLive = 0, worst = null, best = null;
+    const onAir = [];
     for (const gt of members) {
       if (meetList(gt).some(t => Date.parse(t) < start)) again++;
       const e = state.cache[gt], rep = e && e.rep;
@@ -1236,7 +1250,7 @@
       if (login) {
         streamers++;
         const lv = liveEntry(login);
-        if (lv && lv.live && liveFresh(login)) { liveNow++; if (!onAir) onAir = { gt, rep, lv }; }
+        if (lv && lv.live && liveFresh(login)) { liveNow++; onAir.push({ gt, rep, lv }); }
         else if (state.lives[gt] && Date.parse(state.lives[gt]) >= start - 60e3) wasLive++;
       }
       const score = flagScore(rep);
@@ -1268,12 +1282,23 @@
           extras.length ? h('span', { class: 'x' }, extras.join(' · ')) : null,
           liveNow ? h('span', { class: 'tag live' }, `${liveNow} LIVE now`) : null),
       ),
-      (worst || onAir || best) ? h('div', { class: 'recap-c' },
+      (worst || onAir.length || best) ? h('div', { class: 'recap-c' },
         worst ? card('bad', 'Watch out', worst, profileLink(worst.rep), repLabel(worst.rep)) : null,
-        onAir ? card('tw', 'Live on Twitch', onAir, onAir.lv.url, onAir.lv.title || 'Streaming now') : null,
-        !onAir && best ? card('good', 'Best of the session', best, profileLink(best.rep), tagName(best.rep.badges[0])) : null,
+        onAir.length === 1 ? card('tw', 'Live on Twitch', onAir[0], onAir[0].lv.url, onAir[0].lv.title || 'Streaming now') : null,
+        onAir.length > 1 ? liveCard(onAir, nameLink) : null,
+        !onAir.length && best ? card('good', 'Best of the session', best, profileLink(best.rep), tagName(best.rep.badges[0])) : null,
       ) : null,
     );
+  }
+
+  // Several streamers live at once: one card naming them all (three, then "+N more"), each linking to their stream
+  const LIVE_CARD_NAMES = 3;
+  function liveCard(onAir, nameLink) {
+    const shown = onAir.slice(0, LIVE_CARD_NAMES), rest = onAir.length - shown.length;
+    const names = [];
+    shown.forEach((o, i) => { if (i) names.push(', '); const a = nameLink(o, o.lv.url); if (o.lv.title) a.title = o.lv.title; names.push(a); });
+    return h('div', { class: 'hl tw' }, h('span', { class: 'lbl' }, `Live on Twitch (${onAir.length})`),
+      h('span', { class: 'lives' }, names, rest ? h('span', { class: 'more', title: onAir.slice(LIVE_CARD_NAMES).map(o => o.gt).join(', ') }, ` +${rest} more`) : null));
   }
 
   // ---------- History search and filters ----------
