@@ -162,6 +162,74 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await ctx.close();
   }
 
+  // ----- reacting on sotrep.com from the board -----
+  {
+    const st = demo.store();
+    st.cache['Player One'].rep.xuid = 111; st.cache['Player Three'].rep.xuid = 333;
+    st.cache['Player Nine'].rep.xuid = 999;   // in History only
+    const init = `window.__toggle = 200; window.__toggleBody = '{}';
+      const real = window.GM_xmlhttpRequest; window.GM_xmlhttpRequest = (o) => {
+        if (/\\/reviews\\?|\\/reactions\\//.test(o.url)) {
+          window.__calls.push(o.method + ' ' + o.url);
+          const toggle = o.url.includes('/toggle');
+          setTimeout(() => o.onload({ status: toggle ? window.__toggle : 200, responseText: toggle ? window.__toggleBody : JSON.stringify({ reactions: { skilled: 2, clown: 1 }, my_reactions: ['clown'] }), responseHeaders: '' }), 20);
+          return;
+        }
+        return real(o);
+      };`;
+    const { ctx, page, q, errors } = await fresh(browser, st, 'dark', { initScript: init });
+    await page.waitForTimeout(1500);
+    const calls = () => page.evaluate(() => __calls.filter(u => /reviews|reactions/.test(u)));
+    eq('React only on players with an Xbox ID on Recent', await q('.list .react-btn').count(), 2);
+    eq('nothing loaded until you open it', await calls(), []);
+    const one = q('.row:has-text("Player One")');
+    await one.locator('.react-btn').click();
+    await page.waitForTimeout(300);
+    eq('opening loads the counts once', (await calls()).length, 1);
+    eq('four reactions with sotrep counts', await one.locator('.rchip').allTextContents(), ['Suspicious0', 'Skilled2', 'Clown1', 'Friendly0']);
+    eq('your own reaction shows as on', await one.locator('.rchip.on').allTextContents(), ['Clown1']);
+    await one.locator('.rchip:has-text("Skilled")').click();
+    await page.waitForTimeout(300);
+    eq('one click sends one toggle', (await calls()).filter(u => u.startsWith('POST')), ['POST https://www.sotrep.com/api/player/111/reactions/skilled/toggle']);
+    eq('the count and state follow', await one.locator('.rchip.on').allTextContents(), ['Skilled3', 'Clown1']);
+    await one.locator('.rchip:has-text("Clown")').click();
+    await page.waitForTimeout(300);
+    eq('reactions are spaced out', (await calls()).filter(u => u.startsWith('POST')).length, 1);
+    await page.waitForTimeout(1600);
+    eq('then the second one goes', (await calls()).filter(u => u.startsWith('POST')).length, 2);
+    eq('clicking again takes it back', await one.locator('.rchip.on').allTextContents(), ['Skilled3']);
+    await page.evaluate(() => { window.__toggleBody = '{"error":"reaction_cooldown","reaction_type":"skilled"}'; });
+    await page.waitForTimeout(1600);
+    await one.locator('.rchip:has-text("Skilled")').click();
+    await page.waitForTimeout(400);
+    check('a refusal is shown and nothing changes', /Wait a second before selecting Skilled/.test(await one.locator('.react').textContent()) && (await one.locator('.rchip.on').count()) === 1, await one.locator('.react').textContent());
+    await page.evaluate(() => { window.__toggle = 401; window.__toggleBody = '{}'; });
+    await page.waitForTimeout(1600);
+    await one.locator('.rchip:has-text("Friendly")').click();
+    await page.waitForTimeout(400);
+    eq('signed out of sotrep: the usual Sign in button appears', (await q('.status .signin').textContent()).trim(), 'Sign in to sotrep.com');
+    const before = (await calls()).length;
+    await one.locator('.rchip:has-text("Friendly")').click();
+    await page.waitForTimeout(400);
+    eq('no more reactions sent while signed out', (await calls()).length, before);
+    await q('button.tab:has-text("History")').click();
+    eq('no React in History', await q('.list .react-btn').count(), 0);
+    eq('no page errors when reacting', errors, []);
+    await ctx.close();
+  }
+
+  // ----- no React for a name typed by hand -----
+  {
+    const init = `window.__searchBody = JSON.stringify({ gamertag: 'Typed Name', xuid: 555, profile_id: 1 });`;
+    const { ctx, page, q } = await fresh(browser, demo.store(), 'dark', { initScript: init });
+    await q('.controls input').fill('Typed Name');
+    await q('.controls button:has-text("Check")').click();
+    await page.waitForTimeout(1500);
+    eq('typed name is looked up and shown', await q('.row:has-text("Typed Name") .rep').count(), 1);
+    eq('but has no React button', await q('.row:has-text("Typed Name") .react-btn').count(), 0);
+    await ctx.close();
+  }
+
   // ----- match device theme -----
   {
     const { ctx, page, q } = await fresh(browser, { ...demo.store(), ui: { theme: 'auto', layout: 'comfortable' } }, 'light');

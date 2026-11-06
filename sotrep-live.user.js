@@ -112,6 +112,7 @@
     hist: { q: '', colour: 'all', streamers: false, repeat: false },   // History search and filters
     manual: new Set(),  // gamertags looked up by hand (Check box, History button): never alert on these
     live: new Map(),    // twitch login -> { at, live, title, url }
+    react: new Map(),   // Xbox ID -> your reactions panel for that player (this page session only)
     liveQueue: [],
     liveBusy: false,
     signedOut: false,       // seaofthieves.com said 401/403: no fast polling; retries on return to the tab, or every SIGNIN_FALLBACK_MS
@@ -312,6 +313,18 @@
     .pres.on .dot{background:var(--c-ok)}
     .prof{font-size:12px;color:var(--c-acc);text-decoration:none}
     .prof:hover{text-decoration:underline}
+    .react-btn{margin-top:2px}
+    .react{grid-column:2/-1;display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding-top:10px;border-top:1px solid var(--c-l1)}
+    .row.severe .react{border-top-color:var(--c-sevbd)}
+    .rchip{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 11px;border-radius:999px;border:1px solid var(--c-l2);background:var(--c-bg2);font-size:12.5px;color:var(--c-fg2)}
+    .rchip:hover{border-color:var(--c-l3);color:var(--c-fgs)}
+    .rchip .n{color:var(--c-mute);font-weight:600}
+    .rchip.on{border-color:var(--c-acc);background:var(--c-bg4);color:var(--c-fgs)}
+    .rchip.on .n{color:var(--c-acc)}
+    .rchip[disabled]{opacity:.55;cursor:default}
+    .react .msg{font-size:12px;color:var(--c-amb)}
+    .react .via{margin-left:auto;font-size:11.5px;color:var(--c-mute)}
+    .root.compact .react{grid-column:1/-1;padding-top:6px}
 
     .table{border:1px solid var(--c-l1);border-radius:14px;background:var(--c-bg1);overflow-x:auto}
     .tin{min-width:880px}
@@ -865,6 +878,7 @@
       'A fresh look. The session card shows your red, orange, yellow and clean split as a bar, with who to watch out for and who is live on Twitch.',
       'Every player has a reputation badge with its own shape (octagon red, triangle orange, circle yellow, tick clean), so the colours are easy to tell apart, plus a link to their SoT Rep profile.',
       'History is now a table you can scan: reputation, times met, tags and when, grouped by day. The colour filters show how many players each one holds.',
+      'React from the board: Suspicious, Skilled, Clown or Friendly, the same reactions as a sotrep.com profile, on anyone the game put on your Recent board. Press React on their card.',
       'Settings is laid out in sections with switches. Clear and Reset have moved into Settings, under Your data, so they cannot be pressed by accident.',
     ],
     '1.0.11': [
@@ -1444,6 +1458,9 @@
         rep && rep.error ? h('button', { class: 'mini', onclick: () => { delete state.cache[gt]; save(['cache']); enqueue(gt, true); render(); } }, 'Retry') : null,
       ];
       const rowCls = 'row ' + (needsLookup ? 'unchecked' : cls);
+      // reactions: only for someone the game put on the board this session, never a name typed by hand
+      const xuid = rep && !rep.error && rep.xuid ? String(rep.xuid) : null;
+      const canReact = !inHistory && !!xuid && !!cur && !session.manual.has(gt);
 
       if (inHistory) {
         return h('div', { class: rowCls + ' hrow' },
@@ -1464,9 +1481,103 @@
           presence[1] ? h('span', { class: 'pres ' + presence[0] }, presence[0] ? h('span', { class: 'dot' }) : null, presence[1]) : null,
           first ? h('span', {}, 'met ' + first.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })) : null,
           rep && rep.profile_id ? h('a', { class: 'prof', href: link, target: '_blank', rel: 'noopener' }, 'SoT Rep profile') : null,
+          canReact ? h('button', { class: 'mini react-btn', 'aria-expanded': String(reactState(xuid).open), onclick: () => openReactions(xuid) }, reactState(xuid).open ? 'Hide reactions' : 'React') : null,
         ),
+        canReact ? reactRow(xuid) : null,
       );
     }
+  }
+
+  // ---------- reactions on sotrep.com ----------
+  // The same four reactions as a sotrep.com profile, one toggle per click, with your own sotrep login.
+  // Only for players the game put on your Recent board (never names typed by hand), loaded only when you open them,
+  // and spaced REACT_GAP_MS apart. Any refusal from sotrep is shown as it is; a slow-down pauses reacting.
+  const REACTIONS = [['cheater', 'Suspicious'], ['skilled', 'Skilled'], ['clown', 'Clown'], ['helpful', 'Friendly']];
+  const REACT_GAP_MS = 1500;
+  let lastReactAt = 0, reactPauseUntil = 0;
+  function reactState(xuid) {
+    let r = session.react.get(xuid);
+    if (!r) { r = { open: false, loaded: false, loading: false, busy: false, mine: [], counts: {}, msg: '' }; session.react.set(xuid, r); }
+    return r;
+  }
+  function takeReactions(r, d) {
+    if (!plain(d)) return;
+    if (Array.isArray(d.my_reactions)) r.mine = d.my_reactions.map(String);
+    if (plain(d.reactions)) r.counts = Object.fromEntries(Object.entries(d.reactions).map(([k, v]) => [k, v | 0]));
+  }
+  async function openReactions(xuid) {
+    const r = reactState(xuid);
+    r.open = !r.open;
+    if (r.open && !r.loaded && !r.loading) {
+      r.loading = true; render();
+      const d = await sotrepGet(`/api/player/${encodeURIComponent(xuid)}/reviews?sort=popular`);
+      r.loading = false;
+      if (d) { r.loaded = true; takeReactions(r, d); r.msg = ''; } else r.msg = 'Could not load reactions from sotrep.com';
+    }
+    render();
+  }
+  function sotrepPost(path) {
+    return new Promise((resolve) => {
+      GM_xmlhttpRequest({
+        method: 'POST', url: SOTREP + path, headers: { Accept: 'application/json' }, timeout: 15000,
+        onload: (res) => {
+          let d = {}; try { d = JSON.parse(res.responseText) || {}; } catch (e) {}
+          const ra = ((res.responseHeaders || '').match(/retry-after:\s*(\d+)/i) || [])[1];
+          resolve({ status: res.status, data: d, retry: ra ? parseInt(ra, 10) : 0 });
+        },
+        onerror: () => resolve({ status: 0, data: { error: 'could not reach sotrep.com' } }),
+        ontimeout: () => resolve({ status: 0, data: { error: 'sotrep.com timed out' } }),
+      });
+    });
+  }
+  function reactError(res, label) {
+    const err = res.data && res.data.error;
+    if (res.status === 401) { if (!session.sotrepSignedOut) { session.sotrepSignedOut = true; refreshStatus(); } return 'Sign in to sotrep.com to react (button at the top)'; }
+    if (err === 'reaction_cooldown') return `Wait a second before selecting ${label} again`;
+    if (err === 'terms_not_accepted') return 'Accept the sotrep.com terms first: react once on their profile there';
+    if (err === 'username_requirements_not_met') return 'Finish setting up your sotrep.com account first';
+    if (err === 'account_too_new') return 'Your sotrep.com account is too new to react yet';
+    if (res.status === 429 || res.status === 403) {
+      const wait = Math.min(Math.max(res.retry || 60, 30), 900);
+      reactPauseUntil = Date.now() + wait * 1000;
+      return `sotrep.com asked us to slow down, reacting paused for ${wait >= 120 ? Math.round(wait / 60) + ' minutes' : wait + ' seconds'}`;
+    }
+    return 'sotrep.com said: ' + (err ? String(err).slice(0, 120) : 'error ' + res.status);
+  }
+  async function toggleReaction(xuid, type, label) {
+    const r = reactState(xuid);
+    if (r.busy) return;
+    if (session.sotrepSignedOut) { r.msg = 'Sign in to sotrep.com to react (button at the top)'; render(); return; }
+    const paused = Math.max(reactPauseUntil, session.pauseUntil || 0);
+    if (Date.now() < paused) { r.msg = `sotrep.com asked us to wait, try again after ${new Date(paused).toLocaleTimeString('en-GB')}`; render(); return; }
+    r.busy = true; r.msg = ''; render();
+    const wait = lastReactAt + REACT_GAP_MS - Date.now();
+    if (wait > 0) await new Promise(res => setTimeout(res, wait));
+    lastReactAt = Date.now();
+    const res = await sotrepPost(`/api/player/${encodeURIComponent(xuid)}/reactions/${encodeURIComponent(type)}/toggle`);
+    r.busy = false;
+    if (res.status >= 200 && res.status < 300 && !(res.data && res.data.error)) {
+      const was = r.mine.includes(type);
+      r.mine = was ? r.mine.filter(t => t !== type) : [...r.mine, type];
+      r.counts[type] = Math.max(0, (r.counts[type] | 0) + (was ? -1 : 1));
+      takeReactions(r, res.data);   // if sotrep sends the new state back, trust it over our own count
+    } else r.msg = reactError(res, label);
+    render();
+  }
+  function reactRow(xuid) {
+    const r = reactState(xuid);
+    if (!r.open) return null;
+    return h('div', { class: 'react', role: 'group', 'aria-label': 'Reactions on sotrep.com' },
+      r.loading ? h('span', { class: 'msg' }, 'Loading…') : REACTIONS.map(([type, label]) => {
+        const on = r.mine.includes(type);
+        const b = h('button', { class: 'rchip' + (on ? ' on' : ''), 'aria-pressed': String(on), title: on ? `Take back ${label}` : label, onclick: () => toggleReaction(xuid, type, label) },
+          label, h('span', { class: 'n' }, r.counts[type] | 0));
+        if (r.busy) b.disabled = true;
+        return b;
+      }),
+      r.msg ? h('span', { class: 'msg' }, r.msg) : null,
+      h('span', { class: 'via' }, 'on sotrep.com'),
+    );
   }
 
   // ---------- data: Recently Met ----------
