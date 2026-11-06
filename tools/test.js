@@ -230,6 +230,30 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await ctx.close();
   }
 
+  // ----- a player with dozens of socials -----
+  {
+    const st = demo.store();
+    st.cache['Player Six'].rep.socials = [
+      ...Array.from({ length: 12 }, () => ({ platform: 'steam', username: 'steam' })),
+      ...Array.from({ length: 8 }, (_, i) => ({ platform: 'steam', username: 'alt' + i })),
+      { platform: 'twitch', username: 'sixtv', link: 'https://www.twitch.tv/sixtv' },
+    ];
+    const { ctx, page, q, errors } = await fresh(browser, st);
+    const six = q('.row:has-text("Player Six")');
+    eq('socials capped on a card', await six.locator('.soc:not(.more)').count(), 4);
+    eq('repeats merged, the rest behind more', (await six.locator('.soc.more').textContent()).trim(), '+6 more');
+    check('Twitch comes first', (await six.locator('.soc').first().textContent()).includes('sixtv'), await six.locator('.soc').first().textContent());
+    await six.locator('.soc.more').click();
+    eq('more opens them all', await six.locator('.soc:not(.more)').count(), 10);
+    eq('and offers to fold them back', (await six.locator('.soc.more').textContent()).trim(), 'Show fewer');
+    await six.locator('.soc.more').click();
+    eq('Show fewer folds them', await six.locator('.soc:not(.more)').count(), 4);
+    await q('button.tab:has-text("History")').click();
+    eq('History shows three', await q('.row:has-text("Player Six") .soc:not(.more)').count(), 3);
+    eq('no page errors with many socials', errors, []);
+    await ctx.close();
+  }
+
   // ----- match device theme -----
   {
     const { ctx, page, q } = await fresh(browser, { ...demo.store(), ui: { theme: 'auto', layout: 'comfortable' } }, 'light');
