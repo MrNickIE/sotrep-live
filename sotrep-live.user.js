@@ -1348,7 +1348,7 @@
     const f = session.hist, e = state.cache[gt], rep = e && e.rep;
     const ok = !!rep && !rep.error;
     if (f.q) {
-      const hay = [gt, ...(ok ? [...(rep.socials || []).map(x => x && x.username), ...(rep.manual_tags || []).map(tagName), ...(rep.badges || []).map(tagName)] : [])];
+      const hay = [gt, ...(ok ? [...(rep.socials || []).filter(x => x && !x.hidden && x.platform && x.platform !== 'playfab').map(x => x.username), ...(rep.manual_tags || []).map(tagName), ...(rep.badges || []).map(tagName)] : [])];
       if (!hay.some(x => x && String(x).toLowerCase().includes(f.q.toLowerCase()))) return false;
     }
     if (f.colour !== 'all' && histColour(gt) !== f.colour) return false;
@@ -1607,7 +1607,9 @@
     const res = await reactRequest('GET', `/api/player/${encodeURIComponent(xuid)}/reviews?sort=popular`);
     r.loading = false;
     if (res.blocked) r.msg = res.blocked;
-    else if (reactOk(res) && plain(res.data)) { r.mine = []; r.counts = {}; takeReactions(r, res.data); r.loaded = true; }
+    // the chips only show when sotrep says which reactions are yours; without that list a click could undo one
+    else if (reactOk(res) && plain(res.data) && Array.isArray(res.data.my_reactions)) { r.mine = []; r.counts = {}; takeReactions(r, res.data); r.loaded = true; }
+    else if (reactOk(res)) r.msg = 'sotrep.com did not say which reactions are yours, so React is off for now';
     else r.msg = 'Could not load reactions. ' + reactError(res, '').msg;
     render();
   }

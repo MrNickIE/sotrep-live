@@ -222,7 +222,12 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await page.waitForTimeout(1900);
     eq('failed read: no reaction buttons', await three.locator('.rchip').count(), 0);
     check('failed read: says so and offers Reload', /Could not load reactions/.test(await three.locator('.react').textContent()) && await three.locator('.react button:has-text("Reload")').count() === 1, await three.locator('.react').textContent());
-    await page.evaluate(() => { window.__reviews = 200; });
+    // a reply that does not list your reactions is not enough to show buttons
+    await page.evaluate(() => { window.__reviews = 200; window.__mine = null; });
+    await three.locator('.react button:has-text("Reload")').click();
+    await page.waitForTimeout(1900);
+    eq('reply without your reactions: still no buttons', await three.locator('.rchip').count(), 0);
+    await page.evaluate(() => { window.__mine = ['clown', 'cheater']; });
     await three.locator('.react button:has-text("Reload")').click();
     await page.waitForTimeout(1900);
     eq('Reload brings the buttons back', await three.locator('.rchip').count(), 4);
@@ -281,6 +286,7 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
       ...Array.from({ length: 12 }, () => ({ platform: 'steam', username: 'steam' })),
       ...Array.from({ length: 8 }, (_, i) => ({ platform: 'steam', username: 'alt' + i })),
       { platform: 'twitch', username: 'sixtv', link: 'https://www.twitch.tv/sixtv' },
+      { platform: 'steam', username: 'secretalt', hidden: true },
     ];
     st.cache['Player Five'].rep.socials = [{ platform: 'steam', username: 'steam' }, { platform: 'steam', username: 'steam', link: 'https://steamcommunity.com/id/a' }, { platform: 'steam', username: 'steam', link: 'https://steamcommunity.com/id/b' }, { platform: 'steam', username: 'steam', link: 'https://steamcommunity.com/id/b/' }];
     const { ctx, page, q, errors } = await fresh(browser, st);
@@ -297,6 +303,8 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     eq('Show fewer folds them', await six.locator('.soc:not(.more)').count(), 4);
     await q('button.tab:has-text("History")').click();
     eq('History shows three', await q('.row:has-text("Player Six") .soc:not(.more)').count(), 3);
+    await q('.filters input[type=text]').fill('secretalt');
+    eq('a hidden social cannot be found by searching', await q('.list .row').count(), 0);
     await q('.filters input[type=text]').fill('alt7');
     check('a History search shows the social it matched', (await q('.row:has-text("Player Six") .soc:not(.more)').allTextContents()).some(t => t.includes('alt7')), 'alt7 hidden');
     await q('.filters input[type=text]').fill('');
