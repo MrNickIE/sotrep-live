@@ -360,12 +360,17 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
         window.__calls.push(o.url);
         setTimeout(() => o.onload({ status: 200, responseText: JSON.stringify(window.__xbl), responseHeaders: '' }), 20);
       };`;
-    const d = await fresh(browser, { ...demo.store(), play: null }, 'dark', { initScript: init });
+    // fresh times: met 2, 4, 8 and 12 minutes ago, and one of them also met yesterday
+    const dst = withTimes([2, 4, 8, 12, 300, 400], null);
+    dst.meets = { 'Player One': [t(60 * 26), t(2)] };
+    const d = await fresh(browser, dst, 'dark', { initScript: init });
     await d.page.waitForTimeout(4500);
     eq('not playing: no sitting yet', await d.page.evaluate(() => __store.play), null);
     await d.page.evaluate(() => { window.__xbl = { is_playing: true, presence_text: 'Sea of Thieves' }; window.__skew += 6 * 60e3; document.dispatchEvent(new Event('visibilitychange')); });
     await d.page.waitForTimeout(800);
     eq('then playing: a sitting starts, and the board saw it begin', await d.page.evaluate(() => __store.play && __store.play.seenStart), true);
+    eq('Xbox was late: players met up to 10 minutes before the last off reading stay on the board', await d.q('.list .row .name').allTextContents(), ['Player One', 'Player Two', 'Player Three']);
+    check('a player met again on another day does not drag the start back', !/\d+ h \d+ min/.test(await d.q('.recap').textContent()), await d.q('.recap').textContent());
     check('session card says playing since', /Playing since/.test(await d.q('.recap').textContent()), await d.q('.recap').textContent());
     const step = (xbl, mins) => d.page.evaluate(([x, m]) => { window.__xbl = x; window.__skew += m * 60e3; document.dispatchEvent(new Event('visibilitychange')); }, [xbl, mins]);
     const off = { is_playing: false, presence_text: 'Last seen 1m ago: Home' }, on = { is_playing: true, presence_text: 'Sea of Thieves' };
@@ -373,10 +378,15 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await step(off, 15); await d.page.waitForTimeout(500);
     await step(on, 15); await d.page.waitForTimeout(500);
     eq('one odd reading mid-game does not split the sitting', await d.page.evaluate(() => __store.play.start), start1);
-    await step(off, 6); await d.page.waitForTimeout(500);
-    await step(off, 6); await d.page.waitForTimeout(500);
-    await step(on, 6); await d.page.waitForTimeout(800);
-    check('two readings in a row end it: the next playing reading starts a new sitting', await d.page.evaluate((s1) => __store.play.start !== s1 && __store.play.seenStart === true, start1), JSON.stringify(await d.page.evaluate(() => __store.play)));
+    // a crash and relaunch with the board visible: two off readings 5 minutes apart do not end the sitting
+    await step(off, 5); await d.page.waitForTimeout(500);
+    await step(off, 5); await d.page.waitForTimeout(500);
+    await step(on, 5); await d.page.waitForTimeout(500);
+    eq('a short break (crash and relaunch) keeps the sitting', await d.page.evaluate(() => __store.play.start), start1);
+    // a real break: not playing for 15 minutes
+    for (let i = 0; i < 4; i++) { await step(off, 5); await d.page.waitForTimeout(400); }
+    await step(on, 5); await d.page.waitForTimeout(800);
+    check('15 minutes of not playing ends it: the next playing reading starts a new sitting', await d.page.evaluate((s1) => __store.play.start !== s1 && __store.play.seenStart === true, start1), JSON.stringify(await d.page.evaluate(() => __store.play)));
     eq('with the tab open, the board starts afresh for the new sitting', await d.q('.list .row').count(), 0);
     check('and the card shows the new sitting straight away', /No one met yet/.test(await d.q('.recap').textContent()) && /Playing since/.test(await d.q('.recap').textContent()), await d.q('.recap').textContent());
     eq('no page errors with Xbox sessions', d.errors, []);

@@ -129,23 +129,26 @@
 
   // ---------- what counts as a session ----------
   // Best: your own Xbox status, which the presence check already reads every 5 minutes (15 when the tab is hidden).
-  // Checks that say you are playing SoT make one sitting. It ends after two "not playing" readings in a row, or
-  // PLAY_END_MS with no playing reading at all, so one late or odd answer from Xbox never splits a sitting. When the
-  // board saw a sitting begin, it starts just after the last reading that said you were not playing, which keeps two
-  // sittings in one evening apart without losing players met before the first playing check. When the page opened
+  // Checks that say you are playing SoT make one sitting. It ends once "not playing" readings in a row cover at least
+  // PLAY_OFF_MS (so a crash and relaunch, or a late answer from Xbox, never splits one, at either check rate), or after
+  // PLAY_END_MS with no playing reading at all. When the board saw a sitting begin, it starts XBOX_LAG_MS before the
+  // last reading that said you were not playing (Xbox is often a few minutes late to notice), but never before the
+  // previous sitting's last playing reading, which keeps two sittings in one evening apart. When the page opened
   // mid-game, it reaches back to the first meeting as well.
   // Fallback, when Xbox shares nothing: a run of meetings with no gap over SESSION_GAP_MS (90 minutes).
   const PLAY_END_MS = 35 * 60e3;   // two hidden-tab checks (15 min apart) plus slack
-  const XBOX_LAG_MS = 10 * 60e3;   // only for sittings saved before the boundary was stored
+  const PLAY_OFF_MS = 15 * 60e3;   // "not playing" readings must cover this long to end a sitting
+  const XBOX_LAG_MS = 10 * 60e3;   // Xbox is often this late to notice you have started playing
   function playSpan() {
     const p = state.play;
     if (!p || typeof p !== 'object') return null;
     const start = Date.parse(p.start), last = Date.parse(p.last), from = Date.parse(p.from);
     if (!(start > 0) || !(last >= start)) return null;
     const seenStart = p.seenStart === true;
-    return { start, last, seenStart, from: seenStart ? (from > 0 && from <= start ? from : start - XBOX_LAG_MS) : null, offs: p.offs | 0 };
+    const offSince = Date.parse(p.offSince) || 0, offAt = Date.parse(p.offAt) || 0;
+    return { start, last, seenStart, from: seenStart ? (from > 0 && from <= start ? from : start - XBOX_LAG_MS) : null, offs: p.offs | 0, offSince, offAt };
   }
-  const spanPlaying = (sp) => !!sp && Date.now() - sp.last < PLAY_END_MS && sp.offs < 2;
+  const spanPlaying = (sp) => !!sp && Date.now() - sp.last < PLAY_END_MS && !(sp.offs >= 2 && sp.offAt - sp.offSince >= PLAY_OFF_MS);
   // hits: [[time, gamertag]] newest first. untilNow: the session has to reach the present (a page load), not just
   // the latest meeting. Returns { start, end, members, playing, xbox } or null.
   function sessionOf(hits, untilNow) {
@@ -164,8 +167,9 @@
       if (covers) {
         if (sp.seenStart) members.clear();
         for (const [t, gt] of hits) if (t > lower) members.add(gt);
+        // the start: only meetings inside this sitting count (a player met again also has older meetings in hits)
         let first = sp.start;
-        for (const [t, gt] of hits) if (members.has(gt) && t < first) first = t;
+        for (const [t, gt] of hits) if (members.has(gt) && t > lower && t < first) first = t;
         if (!sp.seenStart && start && start < first) first = start;
         return { start: first, end: playing ? now : Math.max(end, sp.last), members, playing, xbox: true };
       }
@@ -636,18 +640,23 @@
     const now = Date.now(), iso = new Date(now).toISOString();
     const sp = playSpan();
     if (x.is_playing) {
-      if (spanPlaying(sp)) { state.play.last = iso; state.play.offs = 0; save(['play']); return; }
+      if (spanPlaying(sp)) { state.play.last = iso; state.play.offs = 0; state.play.offSince = null; save(['play']); return; }
       // a new sitting. The board saw it begin if a reading said you were not playing shortly before.
-      const offAt = Math.max(meNotPlayingAt, sp && Date.parse(state.play.offAt) || 0);
+      const offAt = Math.max(meNotPlayingAt, sp ? sp.offAt : 0);
       const seen = offAt > 0 && now - offAt <= PLAY_END_MS;
-      state.play = { start: iso, last: iso, seenStart: seen, from: seen ? new Date(offAt).toISOString() : null, offs: 0 };
+      const from = seen ? Math.max(offAt - XBOX_LAG_MS, sp ? sp.last : 0) : 0;
+      state.play = { start: iso, last: iso, seenStart: seen, from: seen ? new Date(Math.min(from, now)).toISOString() : null, offs: 0 };
       meNotPlayingAt = 0;
       save(['play']);
       if (seen && listEl) restoreRecent();   // a new sitting with the tab open: the board starts afresh as well
       if (listEl) render();
     } else if (String(x.presence_text || '').trim()) {
       meNotPlayingAt = now;
-      if (sp) { state.play.offs = (state.play.offs | 0) + 1; state.play.offAt = iso; save(['play']); if (listEl) render(); }
+      if (sp) {
+        if (!(state.play.offs | 0)) state.play.offSince = iso;
+        state.play.offs = (state.play.offs | 0) + 1; state.play.offAt = iso;
+        save(['play']); if (listEl) render();
+      }
     }
   }
   function showMe(x) {
