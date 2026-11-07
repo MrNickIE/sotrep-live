@@ -64,10 +64,10 @@
     inList: GM_getValue('inList', null),           // gamertag -> true for everyone present at the last poll (null until first poll)
     missing: GM_getValue('missing', {}),           // gamertag -> consecutive polls absent from the list
     lives: GM_getValue('lives', {}),               // gamertag -> ISO time a Twitch check last found them live (last 30 days)
-    play: GM_getValue('play', null),
+    play: GM_getValue('play', null),               // { start, last, seenStart, from, offs }: the latest stretch your Xbox status said you were playing SoT
     lastPollAt: GM_getValue('lastPollAt', null),   // ISO time of the last attempt to read Recently Met, good or not, to spot a board that was closed or asleep
     awayStamps: GM_getValue('awayStamps', []),     // stamps given to names that arrived while the board was closed (see poll)
-    clearedAt: GM_getValue('clearedAt', null),     // Clear board: nobody met before this goes back on Recent after a refresh               // { start, last, seenStart }: the latest stretch your Xbox status said you were playing SoT
+    clearedAt: GM_getValue('clearedAt', null),     // Clear board: nobody met before this goes back on Recent after a refresh
     meets: GM_getValue('meets', {}),               // gamertag -> ISO times you met them (last 30 days, newest last)
     ui: Object.assign({ theme: 'dark', layout: 'comfortable', pinRed: true }, GM_getValue('ui', {})),
     lastVersion: GM_getValue('lastVersion', null), // the version that last ran, so "what's new" shows once per update
