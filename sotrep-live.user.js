@@ -200,7 +200,7 @@
   // Before 1.0.3 only the latest time was kept, so a player met earlier starts from that one time.
   function recordMeet(gt, now, prevSeen) {
     let a = state.meets[gt];
-    if (!a) { a = []; if (prevSeen && prevSeen !== state.baselineAt) a.push(prevSeen); }
+    if (!a) { a = []; if (prevSeen && prevSeen !== state.baselineAt && !isAway(prevSeen)) a.push(prevSeen); }
     a.push(now);
     state.meets[gt] = a.slice(-30);
   }
@@ -895,7 +895,7 @@
     const data = {
       format: 'sotrep-live-backup', version: 1, script: MY_VERSION, exported: new Date().toISOString(),
       seen: state.seen, cache: state.cache, meets: state.meets, baselined: state.baselined, baselineAt: state.baselineAt,
-      inList: state.inList, missing: state.missing, alerts: Object.assign({}, state.alerts, { discord: '' }), ui: state.ui,
+      inList: state.inList, missing: state.missing, awayStamps: state.awayStamps, clearedAt: state.clearedAt, alerts: Object.assign({}, state.alerts, { discord: '' }), ui: state.ui,
     };
     const url = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }));
     const a = h('a', { href: url, download: `sotrep-live-backup-${new Date().toISOString().slice(0, 10)}.json` });
@@ -922,6 +922,9 @@
       state.inList = plain(d.inList) ? Object.fromEntries(Object.keys(d.inList).filter(okKey).map(k => [k, true])) : null;
       state.missing = plain(d.missing) ? Object.fromEntries(Object.entries(d.missing).filter(([k, v]) => okKey(k) && Number.isFinite(v)).map(([k, v]) => [k, v | 0])) : {};
     }
+    // names the other board met while it was closed keep that marker here too
+    if (Array.isArray(d.awayStamps)) state.awayStamps = [...new Set([...(state.awayStamps || []), ...d.awayStamps.filter(okIso)])];
+    if (okIso(d.clearedAt) && !(Date.parse(state.clearedAt) >= Date.parse(d.clearedAt))) state.clearedAt = d.clearedAt;
     let added = 0, updated = 0;
     for (const [gt, raw] of Object.entries(d.seen)) {
       if (!okKey(gt) || !okIso(raw)) continue;
@@ -1869,7 +1872,8 @@
       // A single read with more than CATCHUP_MAX_NEW unknown names is treated the same way, whatever the gap.
       const lastRead = Date.parse(state.lastPollAt) || 0;
       const unseen = list.filter(p => p && p.Gamertag && !state.seen[p.Gamertag]).length;
-      const catchUp = !!state.baselined && ((!session.polledOnce && (!lastRead || Date.now() - lastRead > CATCHUP_GAP_MS)) || unseen > CATCHUP_MAX_NEW);
+      // measured on every read, not only the first, so a board left open while the PC slept is covered too
+      const catchUp = !!state.baselined && (!lastRead || Date.now() - lastRead > CATCHUP_GAP_MS || unseen > CATCHUP_MAX_NEW);
       let away = 0;
       const MISSING_POLLS = 2;   // a name must be gone this many polls before its return counts as meeting them again
       const present = {};
@@ -1906,9 +1910,13 @@
       } else changed = true;
       state.inList = present;
       if (!state.baselined) { state.baselined = true; state.baselineAt = now; }
-      if (away) { state.awayStamps = [...(state.awayStamps || []), now].slice(-60); save(['awayStamps']); }
+      if (away) {
+        // no cap: a stamp goes only once no name uses it any more, so an away name never turns into a real meeting
+        const used = new Set(Object.values(state.seen));
+        state.awayStamps = [...(state.awayStamps || []), now].filter(st => used.has(st));
+        save(['awayStamps']);
+      }
       if (changed || fresh.length) save(['seen', 'meets', 'inList', 'missing', 'baselined', 'baselineAt']);
-      session.polledOnce = true;
       state.lastPollAt = now; save(['lastPollAt']);
       for (const gt of fresh) {
         session.order = [gt, ...session.order.filter(x => x !== gt)];   // to the top, even if already on the board

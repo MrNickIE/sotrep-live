@@ -456,7 +456,38 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     const c = await fresh(browser, recentRead, 'dark', withList(31));
     await c.page.waitForTimeout(4000);
     eq('31 at once: treated as a catch-up', [await c.q('.list .row:has-text("Away Crew")').count(), await searches(c.page)], [0, 0]);
+    // a backup carries the marker: restored elsewhere, away names stay away
+    const exported = await c.page.evaluate(() => JSON.parse(JSON.stringify(__store)));
+    check('the marker is kept for away names', exported.awayStamps.length === 1 && exported.awayStamps[0] === exported.seen['Away Crew 1'], JSON.stringify(exported.awayStamps));
+    await c.q('button[title="Settings"]').click();
+    const [dl] = await Promise.all([c.page.waitForEvent('download'), c.q('button:has-text("Export backup")').click()]);
+    const bf = path.join(os.tmpdir(), 'sotrep-live-test-away.json');
+    await dl.saveAs(bf);
+    check('the backup holds the marker', JSON.parse(fs.readFileSync(bf, 'utf8')).awayStamps.length === 1, 'missing');
+    const emptyB = { ...demo.store(), seen: {}, cache: {}, meets: {}, baselined: false, baselineAt: null, inList: null };
+    const e = await fresh(browser, emptyB);
+    await e.q('button[title="Settings"]').click();
+    await e.q('input[type=file]').setInputFiles(bf);
+    await e.page.waitForTimeout(500);
+    eq('imported away names keep the marker', await e.page.evaluate(() => __store.awayStamps.includes(__store.seen['Away Crew 1'])), true);
+    await e.ctx.close();
     await c.ctx.close();
+  }
+
+  // ----- a board left open while the PC slept -----
+  {
+    let more = false;
+    const extra = Array.from({ length: 5 }, (_, i) => ({ Gamertag: `Sleep Crew ${i + 1}`, IsOnline: true, IsPlayingSot: true, DisplayPicUrl: '' }));
+    const st = { ...demo.store(), lastPollAt: new Date(Date.now() - 60e3).toISOString() };
+    const init = `window.__skew = 0; const now = Date.now.bind(Date); Date.now = () => now() + window.__skew;`;
+    const { ctx, page, q } = await fresh(browser, st, 'dark', { initScript: init, recent: () => more ? { body: JSON.stringify([...extra, ...demo.list]) } : null });
+    await page.waitForTimeout(1500);
+    more = true;
+    await page.evaluate(() => { window.__skew = 15 * 60e3; document.dispatchEvent(new Event('visibilitychange')); });
+    await page.waitForTimeout(2500);
+    eq('woke after 15 minutes: names met meanwhile are not on Recent', await q('.list .row:has-text("Sleep Crew")').count(), 0);
+    eq('and are not looked up', await page.evaluate(() => __calls.filter(u => u.includes('/api/search')).length), 0);
+    await ctx.close();
   }
 
   // ----- Clear board survives a refresh -----
