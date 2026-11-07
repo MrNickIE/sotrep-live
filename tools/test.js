@@ -490,6 +490,16 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await ctx.close();
   }
 
+  // ----- failed reads on an open board are not a closed board -----
+  {
+    let calls = 0;
+    const st = { ...demo.store(), lastPollAt: new Date(Date.now() - 60e3).toISOString() };
+    const { ctx, page } = await fresh(browser, st, 'dark', { recent: () => (++calls === 1 ? { status: 503, body: '{}' } : null) });
+    await page.waitForTimeout(500);
+    check('a failed read still counts as the board being open', Date.now() - Date.parse(await page.evaluate(() => __store.lastPollAt)) < 30e3, await page.evaluate(() => __store.lastPollAt));
+    await ctx.close();
+  }
+
   // ----- Clear board survives a refresh -----
   {
     const a = await fresh(browser);

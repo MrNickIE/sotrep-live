@@ -65,7 +65,7 @@
     missing: GM_getValue('missing', {}),           // gamertag -> consecutive polls absent from the list
     lives: GM_getValue('lives', {}),               // gamertag -> ISO time a Twitch check last found them live (last 30 days)
     play: GM_getValue('play', null),
-    lastPollAt: GM_getValue('lastPollAt', null),   // ISO time of the last good read of Recently Met, to spot a board that was closed
+    lastPollAt: GM_getValue('lastPollAt', null),   // ISO time of the last attempt to read Recently Met, good or not, to spot a board that was closed or asleep
     awayStamps: GM_getValue('awayStamps', []),     // stamps given to names that arrived while the board was closed (see poll)
     clearedAt: GM_getValue('clearedAt', null),     // Clear board: nobody met before this goes back on Recent after a refresh               // { start, last, seenStart }: the latest stretch your Xbox status said you were playing SoT
     meets: GM_getValue('meets', {}),               // gamertag -> ISO times you met them (last 30 days, newest last)
@@ -1858,6 +1858,10 @@
     if (pollInFlight) return;
     pollInFlight = true;
     lastPollStart = Date.now();
+    // An open board tries at least every 5 minutes, even while reads fail, so only a closed tab or a sleeping PC leaves
+    // a gap over CATCHUP_GAP_MS between attempts. Failed reads must not start a catch-up.
+    const prevAttempt = Date.parse(state.lastPollAt) || 0;
+    state.lastPollAt = new Date().toISOString(); save(['lastPollAt']);
     let delay = null;
     try {
       const list = await fetchRecent();
@@ -1870,10 +1874,9 @@
       // shut). Names that arrived meanwhile were not met just now, so on the first read after a gap over CATCHUP_GAP_MS
       // they are recorded as met while the board was closed: no lookup, not on Recent, their own group in History.
       // A single read with more than CATCHUP_MAX_NEW unknown names is treated the same way, whatever the gap.
-      const lastRead = Date.parse(state.lastPollAt) || 0;
       const unseen = list.filter(p => p && p.Gamertag && !state.seen[p.Gamertag]).length;
       // measured on every read, not only the first, so a board left open while the PC slept is covered too
-      const catchUp = !!state.baselined && (!lastRead || Date.now() - lastRead > CATCHUP_GAP_MS || unseen > CATCHUP_MAX_NEW);
+      const catchUp = !!state.baselined && (!prevAttempt || Date.now() - prevAttempt > CATCHUP_GAP_MS || unseen > CATCHUP_MAX_NEW);
       let away = 0;
       const MISSING_POLLS = 2;   // a name must be gone this many polls before its return counts as meeting them again
       const present = {};
@@ -1917,7 +1920,6 @@
         save(['awayStamps']);
       }
       if (changed || fresh.length) save(['seen', 'meets', 'inList', 'missing', 'baselined', 'baselineAt']);
-      state.lastPollAt = now; save(['lastPollAt']);
       for (const gt of fresh) {
         session.order = [gt, ...session.order.filter(x => x !== gt)];   // to the top, even if already on the board
         session.manual.delete(gt);                                        // the game found them this time, so alerts apply
