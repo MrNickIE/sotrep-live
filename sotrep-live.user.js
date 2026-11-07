@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      2.1.0
+// @version      2.1.1
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js
@@ -44,6 +44,8 @@
   'use strict';
 
   const POLL_SECONDS = 20;        // how often to re-read Recently Met
+  const CATCHUP_GAP_MS = 10 * 60e3;   // board closed longer than this: names that arrived meanwhile are not looked up
+  const CATCHUP_MAX_NEW = 30;         // more unknown names than this in one read is a catch-up too
   const CACHE_HOURS = 24;         // how long a SOTREP lookup is trusted before re-checking
   const LOOKUP_GAP_MS = 3000;     // pause between SOTREP lookups so we never hammer the site (their rate limiter bites below this)
   const SESSION_GAP_MS = 90 * 60e3;   // a run of meetings with no gap over this is one session; a refresh keeps the whole session on the board
@@ -62,7 +64,10 @@
     inList: GM_getValue('inList', null),           // gamertag -> true for everyone present at the last poll (null until first poll)
     missing: GM_getValue('missing', {}),           // gamertag -> consecutive polls absent from the list
     lives: GM_getValue('lives', {}),               // gamertag -> ISO time a Twitch check last found them live (last 30 days)
-    play: GM_getValue('play', null),               // { start, last, seenStart }: the latest stretch your Xbox status said you were playing SoT
+    play: GM_getValue('play', null),
+    lastPollAt: GM_getValue('lastPollAt', null),   // ISO time of the last good read of Recently Met, to spot a board that was closed
+    awayStamps: GM_getValue('awayStamps', []),     // stamps given to names that arrived while the board was closed (see poll)
+    clearedAt: GM_getValue('clearedAt', null),     // Clear board: nobody met before this goes back on Recent after a refresh               // { start, last, seenStart }: the latest stretch your Xbox status said you were playing SoT
     meets: GM_getValue('meets', {}),               // gamertag -> ISO times you met them (last 30 days, newest last)
     ui: Object.assign({ theme: 'dark', layout: 'comfortable', pinRed: true }, GM_getValue('ui', {})),
     lastVersion: GM_getValue('lastVersion', null), // the version that last ran, so "what's new" shows once per update
@@ -178,9 +183,12 @@
   }
   // Restore the whole current session so a refresh does not wipe the board mid-session (see sessionOf).
   // Baseline names (everyone present on the very first poll) are never "recent", whatever their stamp.
+  // names that came in while the board was closed share one stamp per catch-up, like the baseline
+  const isAway = (iso) => Array.isArray(state.awayStamps) && state.awayStamps.includes(iso);
   function restoreRecent() {
+    const cleared = Date.parse(state.clearedAt) || 0;
     const hits = Object.entries(state.seen)
-      .filter(([, iso]) => iso !== state.baselineAt && Date.parse(iso) > 0)
+      .filter(([, iso]) => iso !== state.baselineAt && !isAway(iso) && Date.parse(iso) > cleared)
       .map(([gt, iso]) => [Date.parse(iso), gt])
       .sort((a, b) => b[0] - a[0]);
     const s = sessionOf(hits, true);
@@ -200,7 +208,7 @@
     const a = state.meets[gt];
     if (a) return a;
     const iso = state.seen[gt];
-    return iso && iso !== baselineStamp() ? [iso] : [];
+    return iso && iso !== baselineStamp() && !isAway(iso) ? [iso] : [];
   }
 
   // ---------- UI (inside a shadow root so site CSS cannot reach it) ----------
@@ -953,6 +961,10 @@
   // ---------- what's new ----------
   // One short list per release, shown once after an update. A fresh install sees nothing: it has nothing to compare to.
   const WHATS_NEW = {
+    '2.1.1': [
+      'Opening the board after a break no longer looks up everyone you met while it was closed (on another PC, or with the tab shut). Those players go into their own group at the bottom of History, each with a Look up button, and Recent starts clean.',
+      'Clear board now sticks after a page refresh.',
+    ],
     '2.1.0': [
       'Sessions follow when you actually play. The board reads your Xbox status (the same check as before, no extra requests), so the session card says "Playing since" and two sittings in one evening stay apart. If Xbox hides your status, it falls back to the old rule: a gap of over 90 minutes between meetings.',
       'Red players stay pinned at the top of Recent for the whole session, under Watch out. Turn it off in Settings, Display.',
@@ -1478,7 +1490,8 @@
     const shown = active ? all.filter(([gt]) => histMatch(gt)) : all;
     filterCount.textContent = active ? `${shown.length} of ${all.length}` : `${all.length} players`;
     if (!shown.length) { listEl.append(h('div', { class: 'empty' }, 'No one matches those filters.')); return; }
-    const tracked = shown.filter(([, iso]) => iso !== base);
+    const tracked = shown.filter(([, iso]) => iso !== base && !isAway(iso));
+    const awayRows = shown.filter(([, iso]) => isAway(iso));
     const recent = tracked.filter(([, iso]) => Date.parse(iso) >= cutoff);
     const older = tracked.filter(([, iso]) => !(Date.parse(iso) >= cutoff));
     const baseline = shown.filter(([, iso]) => iso === base);
@@ -1497,6 +1510,7 @@
     }
     if (dayHead) dayHead.lastChild.textContent = `${dayN}`;
     if (older.length) fold(box, 'older', `Older than ${HISTORY_OPEN_DAYS} days`, older, false, active);
+    if (awayRows.length) fold(box, 'away', 'Met while the board was closed', awayRows, false, active);
     if (baseline.length) fold(box, 'baseline', 'Met before tracking started', baseline, true, active);
     listEl.append(h('div', { class: 'table' }, box));
   }
@@ -1849,6 +1863,14 @@
       session.count = list.length;
       const now = new Date().toISOString();
       const fresh = [];
+      // Catch-up: Rare's list keeps growing while this board is closed (you play on another machine, or with this tab
+      // shut). Names that arrived meanwhile were not met just now, so on the first read after a gap over CATCHUP_GAP_MS
+      // they are recorded as met while the board was closed: no lookup, not on Recent, their own group in History.
+      // A single read with more than CATCHUP_MAX_NEW unknown names is treated the same way, whatever the gap.
+      const lastRead = Date.parse(state.lastPollAt) || 0;
+      const unseen = list.filter(p => p && p.Gamertag && !state.seen[p.Gamertag]).length;
+      const catchUp = !!state.baselined && ((!session.polledOnce && (!lastRead || Date.now() - lastRead > CATCHUP_GAP_MS)) || unseen > CATCHUP_MAX_NEW);
+      let away = 0;
       const MISSING_POLLS = 2;   // a name must be gone this many polls before its return counts as meeting them again
       const present = {};
       let changed = false;
@@ -1861,8 +1883,9 @@
           // never seen: a new encounter
           state.seen[gt] = now;
           changed = true;
-          if (state.baselined) { fresh.push(gt); recordMeet(gt, now, null); }
-        } else if (state.inList && !state.inList[gt] && (state.missing[gt] | 0) >= MISSING_POLLS) {
+          if (state.baselined && catchUp) away++;
+          else if (state.baselined) { fresh.push(gt); recordMeet(gt, now, null); }
+        } else if (!catchUp && state.inList && !state.inList[gt] && (state.missing[gt] | 0) >= MISSING_POLLS) {
           // seen before, dropped off Rare's rolling list, now back: you met them again
           // the 24 h cache still applies, so a quick return costs no new lookup
           recordMeet(gt, now, state.seen[gt]);
@@ -1883,7 +1906,10 @@
       } else changed = true;
       state.inList = present;
       if (!state.baselined) { state.baselined = true; state.baselineAt = now; }
+      if (away) { state.awayStamps = [...(state.awayStamps || []), now].slice(-60); save(['awayStamps']); }
       if (changed || fresh.length) save(['seen', 'meets', 'inList', 'missing', 'baselined', 'baselineAt']);
+      session.polledOnce = true;
+      state.lastPollAt = now; save(['lastPollAt']);
       for (const gt of fresh) {
         session.order = [gt, ...session.order.filter(x => x !== gt)];   // to the top, even if already on the board
         session.manual.delete(gt);                                        // the game found them this time, so alerts apply
@@ -2057,9 +2083,9 @@
     enqueue(gt);
     render();
   }
-  function clearSession() { session.order = []; session.queue = []; render(); setStatus(statusLine()); }
+  function clearSession() { session.order = []; session.queue = []; state.clearedAt = new Date().toISOString(); save(['clearedAt']); render(); setStatus(statusLine()); }
   function resetAll() {
-    state.seen = {}; state.cache = {}; state.baselined = false; state.baselineAt = null; state.inList = null; state.missing = {}; state.meets = {}; state.lives = {}; state.play = null; save();
+    state.seen = {}; state.cache = {}; state.baselined = false; state.baselineAt = null; state.inList = null; state.missing = {}; state.meets = {}; state.lives = {}; state.play = null; state.awayStamps = []; state.clearedAt = null; state.lastPollAt = null; save();
     session.order = []; session.queue = [];
     poll();
   }

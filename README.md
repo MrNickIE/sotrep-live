@@ -26,6 +26,7 @@ Independent personal tool. Not affiliated with, or endorsed by, SoT Rep, Rare or
 - Any gamertag it has not seen before is a new encounter. It is looked up on sotrep.com the same way the site's own search box does, using your sotrep.com login, and shown on the board.
 - Lookups run one at a time, 3 s apart, and are cached for 24 hours. A new player normally costs one request. There is deliberately no bulk lookup. If sotrep.com rate-limits you anyway, the board pauses lookups for the time it asks and carries on afterwards; the status line says so.
 - The first run takes the current list (around 180 names) as a baseline and does not look any of them up, so the board only shows genuinely new encounters.
+- Opening the board after a break (more than 10 minutes, or on a different PC from the one you play on) works the same way: names that joined Rare's list while it was closed are not looked up and do not go on Recent. They wait in their own group at the bottom of History, each with a Look up button. A single read with more than 30 new names is treated the same way.
 - Nothing touches the game client. The two calls are the same ones the two websites make themselves.
 
 ## Setup, step by step
@@ -53,7 +54,7 @@ Whatever the browser, allow the one-time requests Tampermonkey shows for sotrep.
 - Alerts fire only for players the game registered on its own. Manual lookups (the Check box, History's Look up buttons) never alert.
 - **Settings** (the gear button, top right) opens the alert settings, the display choices, backup, diagnostics and an About section with a link back to this page (the SOTREP Live logo links here too). Switch on what you want to be told about: red (severe flags or banned accounts), orange (moderate flags), purple (a linked streamer who is live), in any mix. A chime plays in the tab by default. Paste a Discord webhook URL to have flagged players posted to a private channel with the rep summary and a profile link, which is the reliable route while a game has the screen. A Windows desktop notification is also available but is hidden behind a full-screen game. **Test alerts** fires every enabled channel once.
 - **Streamers**: a player whose sotrep profile links a Twitch channel is checked against Twitch when they appear, once more a minute later if that first check says not live (Twitch can lag a stream that has just started), then every five minutes while on the Recent board. If they are live, the row gets a purple **LIVE on Twitch** pill that opens the stream, and the streamer alert fires (chime, Discord embed with the stream link). Offline streamers just show their Twitch link. The panel has a box to test the live check against any channel name.
-- **Clear board** empties the Recent board. **Reset everything** (press twice) forgets everyone and re-baselines. Both live in Settings, under Your data, so they cannot be hit by accident.
+- **Clear board** empties the Recent board, and it stays empty after a refresh. **Reset everything** (press twice) forgets everyone and re-baselines. Both live in Settings, under Your data, so they cannot be hit by accident.
 
 Each player has a reputation badge with its own shape as well as its colour: green tick clean, yellow circle light flags, orange triangle moderate, red octagon severe or banned accounts. The ring round their picture matches.
 

@@ -428,6 +428,49 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await ctx.close();
   }
 
+  // ----- names that arrived while the board was closed -----
+  {
+    const extra = (n) => Array.from({ length: n }, (_, i) => ({ Gamertag: `Away Crew ${i + 1}`, IsOnline: true, IsPlayingSot: true, DisplayPicUrl: '' }));
+    const withList = (n) => ({ recent: () => ({ body: JSON.stringify([...extra(n), ...demo.list]) }) });
+    const searches = (page) => page.evaluate(() => __calls.filter(u => u.includes('/api/search')).length);
+    // opened after a long break: 40 new names, none looked up, none on Recent
+    const old = { ...demo.store(), lastPollAt: new Date(Date.now() - 3 * 3600e3).toISOString() };
+    const a = await fresh(browser, old, 'dark', withList(40));
+    await a.page.waitForTimeout(4000);
+    eq('closed board: nobody new goes on Recent', await a.q('.list .row:has-text("Away Crew")').count(), 0);
+    eq('closed board: nobody is looked up', await searches(a.page), 0);
+    await a.q('button.tab:has-text("History")').click();
+    check('closed board: they wait in their own group in History', /Met while the board was closed\s*40/.test(await a.q('.list').textContent()), 'no group');
+    await a.q('.tsec.fold:has-text("Met while the board was closed")').click();
+    eq('each with a Look up button', await a.q('.list .row:has-text("Away Crew") button:has-text("Look up")').count(), 40);
+    eq('no page errors on catch-up', a.errors, []);
+    await a.ctx.close();
+    // the board was open a minute ago (a refresh): three new names are real meetings
+    const recentRead = { ...demo.store(), lastPollAt: new Date(Date.now() - 60e3).toISOString() };
+    const b = await fresh(browser, recentRead, 'dark', withList(3));
+    await b.page.waitForTimeout(4000);
+    eq('board just open: new names go on Recent', await b.q('.list .row:has-text("Away Crew")').count(), 3);
+    check('and get looked up one at a time', (await searches(b.page)) >= 1, 'no lookup');
+    await b.ctx.close();
+    // more than 30 unknown names in one read is a catch-up even with the board open
+    const c = await fresh(browser, recentRead, 'dark', withList(31));
+    await c.page.waitForTimeout(4000);
+    eq('31 at once: treated as a catch-up', [await c.q('.list .row:has-text("Away Crew")').count(), await searches(c.page)], [0, 0]);
+    await c.ctx.close();
+  }
+
+  // ----- Clear board survives a refresh -----
+  {
+    const a = await fresh(browser);
+    await a.q('button[title="Settings"]').click();
+    await a.q('.panel button:has-text("Clear board")').click();
+    const after = await a.page.evaluate(() => JSON.parse(JSON.stringify(__store)));
+    await a.ctx.close();
+    const b = await fresh(browser, after);
+    eq('cleared board stays empty after a refresh', await b.q('.list .row').count(), 0);
+    await b.ctx.close();
+  }
+
   // ----- match device theme -----
   {
     const { ctx, page, q } = await fresh(browser, { ...demo.store(), ui: { theme: 'auto', layout: 'comfortable' } }, 'light');
