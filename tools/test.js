@@ -167,51 +167,95 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     const st = demo.store();
     st.cache['Player One'].rep.xuid = 111; st.cache['Player Three'].rep.xuid = 333;
     st.cache['Player Nine'].rep.xuid = 999;   // in History only
-    const init = `window.__toggle = 200; window.__toggleBody = '{}';
+    const init = `window.__toggle = 200; window.__toggleBody = '{}'; window.__reviews = 200; window.__mine = ['clown']; window.__rx = [];
       const real = window.GM_xmlhttpRequest; window.GM_xmlhttpRequest = (o) => {
         if (/\\/reviews\\?|\\/reactions\\//.test(o.url)) {
-          window.__calls.push(o.method + ' ' + o.url);
+          window.__rx.push({ m: o.method, u: o.url, t: Date.now() });
           const toggle = o.url.includes('/toggle');
-          setTimeout(() => o.onload({ status: toggle ? window.__toggle : 200, responseText: toggle ? window.__toggleBody : JSON.stringify({ reactions: { skilled: 2, clown: 1 }, my_reactions: ['clown'] }), responseHeaders: '' }), 20);
+          const body = toggle ? window.__toggleBody : JSON.stringify({ reactions: { skilled: 2, clown: 1 }, my_reactions: window.__mine });
+          setTimeout(() => o.onload({ status: toggle ? window.__toggle : window.__reviews, responseText: body, responseHeaders: '' }), 20);
           return;
         }
         return real(o);
       };`;
     const { ctx, page, q, errors } = await fresh(browser, st, 'dark', { initScript: init });
     await page.waitForTimeout(1500);
-    const calls = () => page.evaluate(() => __calls.filter(u => /reviews|reactions/.test(u)));
+    const rx = () => page.evaluate(() => __rx);
+    const posts = async () => (await rx()).filter(c => c.m === 'POST');
     eq('React only on players with an Xbox ID on Recent', await q('.list .react-btn').count(), 2);
-    eq('nothing loaded until you open it', await calls(), []);
-    const one = q('.row:has-text("Player One")');
+    eq('nothing loaded until you open it', await rx(), []);
+    const one = q('.row:has-text("Player One")'), three = q('.row:has-text("Player Three")');
     await one.locator('.react-btn').click();
     await page.waitForTimeout(300);
-    eq('opening loads the counts once', (await calls()).length, 1);
+    eq('opening loads the counts', (await rx()).length, 1);
     eq('four reactions with sotrep counts', await one.locator('.rchip').allTextContents(), ['Suspicious0', 'Skilled2', 'Clown1', 'Friendly0']);
     eq('your own reaction shows as on', await one.locator('.rchip.on').allTextContents(), ['Clown1']);
     await one.locator('.rchip:has-text("Skilled")').click();
-    await page.waitForTimeout(300);
-    eq('one click sends one toggle', (await calls()).filter(u => u.startsWith('POST')), ['POST https://www.sotrep.com/api/player/111/reactions/skilled/toggle']);
+    await page.waitForTimeout(1900);
+    eq('one click sends one toggle', (await posts()).map(c => c.u), ['https://www.sotrep.com/api/player/111/reactions/skilled/toggle']);
     eq('the count and state follow', await one.locator('.rchip.on').allTextContents(), ['Skilled3', 'Clown1']);
-    await one.locator('.rchip:has-text("Clown")').click();
-    await page.waitForTimeout(300);
-    eq('reactions are spaced out', (await calls()).filter(u => u.startsWith('POST')).length, 1);
-    await page.waitForTimeout(1600);
-    eq('then the second one goes', (await calls()).filter(u => u.startsWith('POST')).length, 2);
-    eq('clicking again takes it back', await one.locator('.rchip.on').allTextContents(), ['Skilled3']);
+
+    // reopening reads again, so a reaction left on sotrep.com in the meantime is seen
+    await page.evaluate(() => { window.__mine = ['clown', 'cheater']; });
+    await one.locator('.react-btn').click();
+    await one.locator('.react-btn').click();
+    await page.waitForTimeout(1900);
+    eq('reopening reads your reactions again', (await rx()).filter(c => c.m === 'GET').length, 2);
+    eq('and shows what you did on sotrep.com', await one.locator('.rchip.on').allTextContents(), ['Suspicious0', 'Clown1']);
+
+    // clicks on two cards at once still go one at a time
+    await three.locator('.react-btn').click();
+    await page.waitForTimeout(1900);
+    await one.locator('.rchip:has-text("Friendly")').click();
+    await three.locator('.rchip:has-text("Skilled")').click();
+    await page.waitForTimeout(3600);
+    const ps = await posts();
+    eq('both cards sent their toggle', ps.length, 3);
+    check('clicks on different cards are spaced out', ps[2].t - ps[1].t >= 1400, `${ps[2].t - ps[1].t} ms apart`);
+    const all = await rx();
+    check('every reaction request is spaced out, reads too', all.every((c, i) => !i || c.t - all[i - 1].t >= 1400), JSON.stringify(all.map(c => c.t)));
+
+    // a failed read shows no buttons, only Reload, so a click can never toggle blind
+    await page.evaluate(() => { window.__reviews = 500; });
+    await three.locator('.react-btn').click();
+    await three.locator('.react-btn').click();
+    await page.waitForTimeout(1900);
+    eq('failed read: no reaction buttons', await three.locator('.rchip').count(), 0);
+    check('failed read: says so and offers Reload', /Could not load reactions/.test(await three.locator('.react').textContent()) && await three.locator('.react button:has-text("Reload")').count() === 1, await three.locator('.react').textContent());
+    await page.evaluate(() => { window.__reviews = 200; });
+    await three.locator('.react button:has-text("Reload")').click();
+    await page.waitForTimeout(1900);
+    eq('Reload brings the buttons back', await three.locator('.rchip').count(), 4);
+
+    // a known refusal keeps the buttons; a slow-down pauses everything, reads included
     await page.evaluate(() => { window.__toggleBody = '{"error":"reaction_cooldown","reaction_type":"skilled"}'; });
-    await page.waitForTimeout(1600);
     await one.locator('.rchip:has-text("Skilled")').click();
-    await page.waitForTimeout(400);
-    check('a refusal is shown and nothing changes', /Wait a second before selecting Skilled/.test(await one.locator('.react').textContent()) && (await one.locator('.rchip.on').count()) === 1, await one.locator('.react').textContent());
-    await page.evaluate(() => { window.__toggle = 401; window.__toggleBody = '{}'; });
-    await page.waitForTimeout(1600);
+    await page.waitForTimeout(1900);
+    check('a refusal is shown and nothing changes', /Wait a second before selecting Skilled/.test(await one.locator('.react').textContent()) && (await one.locator('.rchip').count()) === 4, await one.locator('.react').textContent());
+    await page.evaluate(() => { window.__toggle = 429; window.__toggleBody = '{}'; });
+    await one.locator('.rchip:has-text("Clown")').click();
+    await page.waitForTimeout(1900);
+    check('a slow-down pauses reacting', /slow down/.test(await one.locator('.react').textContent()), await one.locator('.react').textContent());
+    let before = (await rx()).length;
+    await three.locator('.react-btn').click();
+    await three.locator('.react-btn').click();
+    await page.waitForTimeout(1900);
+    eq('no read is sent while paused', (await rx()).length, before);
+    check('the panel says why', /asked us to wait/.test(await three.locator('.react').textContent()), await three.locator('.react').textContent());
+
+    // signed out of sotrep: the usual button, then nothing is sent
+    await page.evaluate(() => { window.__skew = 0; const now = Date.now.bind(Date); Date.now = () => now() + 16 * 60e3; window.__toggle = 401; });
+    await one.locator('.react-btn').click();
+    await one.locator('.react-btn').click();
+    await page.waitForTimeout(1900);
     await one.locator('.rchip:has-text("Friendly")').click();
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(1900);
     eq('signed out of sotrep: the usual Sign in button appears', (await q('.status .signin').textContent()).trim(), 'Sign in to sotrep.com');
-    const before = (await calls()).length;
-    await one.locator('.rchip:has-text("Friendly")').click();
-    await page.waitForTimeout(400);
-    eq('no more reactions sent while signed out', (await calls()).length, before);
+    eq('signed out: buttons give way to Reload', await one.locator('.rchip').count(), 0);
+    before = (await rx()).length;
+    await one.locator('.react button:has-text("Reload")').click();
+    await page.waitForTimeout(1900);
+    eq('no more reactions sent while signed out', (await rx()).length, before);
     await q('button.tab:has-text("History")').click();
     eq('no React in History', await q('.list .react-btn').count(), 0);
     eq('no page errors when reacting', errors, []);
@@ -238,8 +282,11 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
       ...Array.from({ length: 8 }, (_, i) => ({ platform: 'steam', username: 'alt' + i })),
       { platform: 'twitch', username: 'sixtv', link: 'https://www.twitch.tv/sixtv' },
     ];
+    st.cache['Player Five'].rep.socials = [{ platform: 'steam', username: 'steam' }, { platform: 'steam', username: 'steam', link: 'https://steamcommunity.com/id/a' }, { platform: 'steam', username: 'steam', link: 'https://steamcommunity.com/id/b' }, { platform: 'steam', username: 'steam', link: 'https://steamcommunity.com/id/b/' }];
     const { ctx, page, q, errors } = await fresh(browser, st);
     const six = q('.row:has-text("Player Six")');
+    eq('different accounts with the same name both kept, with their links', await q('.row:has-text("Player Five") a.soc').evaluateAll(as => as.map(a => a.getAttribute('href'))), ['https://steamcommunity.com/id/a', 'https://steamcommunity.com/id/b']);
+    eq('a bare copy gives way to a linked one', await q('.row:has-text("Player Five") .soc').count(), 2);
     eq('socials capped on a card', await six.locator('.soc:not(.more)').count(), 4);
     eq('repeats merged, the rest behind more', (await six.locator('.soc.more').textContent()).trim(), '+6 more');
     check('Twitch comes first', (await six.locator('.soc').first().textContent()).includes('sixtv'), await six.locator('.soc').first().textContent());
@@ -250,6 +297,9 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     eq('Show fewer folds them', await six.locator('.soc:not(.more)').count(), 4);
     await q('button.tab:has-text("History")').click();
     eq('History shows three', await q('.row:has-text("Player Six") .soc:not(.more)').count(), 3);
+    await q('.filters input[type=text]').fill('alt7');
+    check('a History search shows the social it matched', (await q('.row:has-text("Player Six") .soc:not(.more)').allTextContents()).some(t => t.includes('alt7')), 'alt7 hidden');
+    await q('.filters input[type=text]').fill('');
     eq('no page errors with many socials', errors, []);
     await ctx.close();
   }

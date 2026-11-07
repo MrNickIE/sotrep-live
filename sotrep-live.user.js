@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      2.0.1
+// @version      2.0.2
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js
@@ -326,6 +326,7 @@
     .rchip.on .n{color:var(--c-acc)}
     .rchip[disabled]{opacity:.55;cursor:default}
     .react .msg{font-size:12px;color:var(--c-amb)}
+    .react .note{font-size:12px;color:var(--c-mute)}
     .react .via{margin-left:auto;font-size:11.5px;color:var(--c-mute)}
     .root.compact .react{grid-column:1/-1;padding-top:6px}
 
@@ -416,6 +417,8 @@
     .root.compact .hrow .meta{margin-top:0}
     .root.compact .recap{padding:12px 16px;margin-bottom:4px}
     .root.compact .big{font-size:22px}
+    /* many controls reset their styles with all:unset, which also drops the focus ring; this puts it back for all of them */
+    .root :is(button,a,input,[tabindex]):focus-visible{outline:2px solid var(--c-acc)!important;outline-offset:2px}
   `;
 
   function h(tag, attrs, ...kids) {
@@ -877,6 +880,11 @@
   // ---------- what's new ----------
   // One short list per release, shown once after an update. A fresh install sees nothing: it has nothing to compare to.
   const WHATS_NEW = {
+    '2.0.2': [
+      'Reacting is safer: your reactions are read from sotrep.com every time you open React, and the buttons only appear once they are known, so a click can never undo a reaction you left elsewhere.',
+      'Reactions on different cards are spaced out properly, and nothing is sent while sotrep.com has asked us to wait.',
+      'Two different accounts with the same name are no longer merged, and a History search always shows the social it matched.',
+    ],
     '2.0.1': [
       'Players with a long list of socials no longer take over the board. Repeats are merged, Twitch comes first, and only a few show until you press +N more on that card.',
     ],
@@ -1426,10 +1434,25 @@
         else if (login && !lv && session.liveQueue.some(q => q.login === login)) tags.push(h('span', { class: 'tag' }, 'checking Twitch…'));
         // Some profiles list dozens of socials (often the same Steam entry over and over). Repeats are merged, Twitch
         // goes first, and only a few show until you open the rest on that card.
-        const seenSoc = new Set();
-        const soc = (rep.socials || []).filter(s => s && !s.hidden && s.platform && s.platform !== 'playfab')
-          .filter((s) => { const k = String(s.platform).toLowerCase() + '|' + String(s.username || s.platform).toLowerCase().trim(); if (seenSoc.has(k)) return false; seenSoc.add(k); return true; })
-          .sort((a, b) => (String(b.platform).toLowerCase() === 'twitch') - (String(a.platform).toLowerCase() === 'twitch'));
+        // Repeats share a platform and name; distinct linked accounts with the same name are kept, and a linked copy
+        // wins over a bare one.
+        const groups = new Map();
+        for (const x of (rep.socials || []).filter(x => x && !x.hidden && x.platform && x.platform !== 'playfab')) {
+          const k = String(x.platform).toLowerCase() + '|' + String(x.username || x.platform).toLowerCase().trim();
+          if (!groups.has(k)) groups.set(k, []);
+          groups.get(k).push(x);
+        }
+        const soc = [];
+        for (const arr of groups.values()) {
+          const linked = arr.filter(x => /^https:\/\//i.test(String(x.link || '')));
+          if (!linked.length) { soc.push(arr[0]); continue; }
+          const seenLink = new Set();
+          for (const x of linked) { const l = String(x.link).toLowerCase().replace(/\/+$/, ''); if (!seenLink.has(l)) { seenLink.add(l); soc.push(x); } }
+        }
+        // Twitch first; in a History search, whatever matched comes before everything so it is never hidden
+        const q = inHistory && session.hist.q ? session.hist.q.toLowerCase() : '';
+        const rank = (x) => (q && String(x.username || '').toLowerCase().includes(q) ? 2 : 0) + (String(x.platform).toLowerCase() === 'twitch' ? 1 : 0);
+        soc.sort((a, b) => rank(b) - rank(a));
         const cap = inHistory ? SOCIALS_HISTORY : SOCIALS_CARD;
         const open = session.socOpen.has(gt);
         const show = open || soc.length <= cap + 1 ? soc : soc.slice(0, cap);
@@ -1509,12 +1532,14 @@
   }
 
   // ---------- reactions on sotrep.com ----------
-  // The same four reactions as a sotrep.com profile, one toggle per click, with your own sotrep login.
-  // Only for players the game put on your Recent board (never names typed by hand), loaded only when you open them,
-  // and spaced REACT_GAP_MS apart. Any refusal from sotrep is shown as it is; a slow-down pauses reacting.
+  // The same four reactions as a sotrep.com profile, with your own sotrep login. Only for players the game put on your
+  // Recent board (never names typed by hand), and nothing is sent until you press React. sotrep's endpoint is a toggle,
+  // so the chips only show once your current reactions have been read, and they are read again every time the panel
+  // opens and after any failure that leaves the state in doubt. Every request, read or toggle, goes through one queue
+  // REACT_GAP_MS apart, and the pause and sign-in state are checked again just before each one is sent.
   const REACTIONS = [['cheater', 'Suspicious'], ['skilled', 'Skilled'], ['clown', 'Clown'], ['helpful', 'Friendly']];
   const REACT_GAP_MS = 1500;
-  let lastReactAt = 0, reactPauseUntil = 0;
+  let lastReactAt = 0, reactPauseUntil = 0, reactChain = Promise.resolve();
   function reactState(xuid) {
     let r = session.react.get(xuid);
     if (!r) { r = { open: false, loaded: false, loading: false, busy: false, mine: [], counts: {}, msg: '' }; session.react.set(xuid, r); }
@@ -1525,21 +1550,17 @@
     if (Array.isArray(d.my_reactions)) r.mine = d.my_reactions.map(String);
     if (plain(d.reactions)) r.counts = Object.fromEntries(Object.entries(d.reactions).map(([k, v]) => [k, v | 0]));
   }
-  async function openReactions(xuid) {
-    const r = reactState(xuid);
-    r.open = !r.open;
-    if (r.open && !r.loaded && !r.loading) {
-      r.loading = true; render();
-      const d = await sotrepGet(`/api/player/${encodeURIComponent(xuid)}/reviews?sort=popular`);
-      r.loading = false;
-      if (d) { r.loaded = true; takeReactions(r, d); r.msg = ''; } else r.msg = 'Could not load reactions from sotrep.com';
-    }
-    render();
+  // why reacting cannot go ahead right now, or '' when it can
+  function reactBlocked() {
+    if (session.sotrepSignedOut) return 'Sign in to sotrep.com to react (button at the top)';
+    const paused = Math.max(reactPauseUntil, session.pauseUntil || 0);
+    if (Date.now() < paused) return `sotrep.com asked us to wait, try again after ${new Date(paused).toLocaleTimeString('en-GB')}`;
+    return '';
   }
-  function sotrepPost(path) {
+  function sotrepSend(method, path) {
     return new Promise((resolve) => {
       GM_xmlhttpRequest({
-        method: 'POST', url: SOTREP + path, headers: { Accept: 'application/json' }, timeout: 15000,
+        method, url: SOTREP + path, headers: { Accept: 'application/json' }, timeout: 15000,
         onload: (res) => {
           let d = {}; try { d = JSON.parse(res.responseText) || {}; } catch (e) {}
           const ra = ((res.responseHeaders || '').match(/retry-after:\s*(\d+)/i) || [])[1];
@@ -1550,51 +1571,86 @@
       });
     });
   }
+  function reactRequest(method, path) {
+    const job = reactChain.then(async () => {
+      const wait = lastReactAt + REACT_GAP_MS - Date.now();
+      if (wait > 0) await new Promise(res => setTimeout(res, wait));
+      const blocked = reactBlocked();
+      if (blocked) return { blocked };
+      lastReactAt = Date.now();
+      return sotrepSend(method, path);
+    });
+    reactChain = job.catch(() => {});
+    return job;
+  }
+  const reactOk = (res) => res.status >= 200 && res.status < 300 && !(res.data && res.data.error);
+  // Turns a failed reply into words. Also sets the pause or the signed-out flag, and says whether we still know
+  // your reactions for sure (keep) or must read them again before the next toggle.
   function reactError(res, label) {
     const err = res.data && res.data.error;
-    if (res.status === 401) { if (!session.sotrepSignedOut) { session.sotrepSignedOut = true; refreshStatus(); } return 'Sign in to sotrep.com to react (button at the top)'; }
-    if (err === 'reaction_cooldown') return `Wait a second before selecting ${label} again`;
-    if (err === 'terms_not_accepted') return 'Accept the sotrep.com terms first: react once on their profile there';
-    if (err === 'username_requirements_not_met') return 'Finish setting up your sotrep.com account first';
-    if (err === 'account_too_new') return 'Your sotrep.com account is too new to react yet';
+    if (res.status === 401) { if (!session.sotrepSignedOut) { session.sotrepSignedOut = true; refreshStatus(); } return { msg: 'Sign in to sotrep.com to react (button at the top)', keep: false }; }
+    if (err === 'reaction_cooldown') return { msg: `Wait a second before selecting ${label} again`, keep: true };
+    if (err === 'account_too_new') return { msg: 'Your sotrep.com account is too new to react yet', keep: true };
+    if (err === 'terms_not_accepted') return { msg: 'Accept the sotrep.com terms first: react once on their profile there, then Reload', keep: false };
+    if (err === 'username_requirements_not_met') return { msg: 'Finish setting up your sotrep.com account first, then Reload', keep: false };
     if (res.status === 429 || res.status === 403) {
       const wait = Math.min(Math.max(res.retry || 60, 30), 900);
       reactPauseUntil = Date.now() + wait * 1000;
-      return `sotrep.com asked us to slow down, reacting paused for ${wait >= 120 ? Math.round(wait / 60) + ' minutes' : wait + ' seconds'}`;
+      return { msg: `sotrep.com asked us to slow down, reacting paused for ${wait >= 120 ? Math.round(wait / 60) + ' minutes' : wait + ' seconds'}`, keep: true };
     }
-    return 'sotrep.com said: ' + (err ? String(err).slice(0, 120) : 'error ' + res.status);
+    return { msg: 'sotrep.com said: ' + (err ? String(err).slice(0, 120) : 'error ' + res.status), keep: false };
+  }
+  async function loadReactions(xuid) {
+    const r = reactState(xuid);
+    if (r.loading) return;
+    r.loading = true; r.loaded = false; r.msg = ''; render();
+    const res = await reactRequest('GET', `/api/player/${encodeURIComponent(xuid)}/reviews?sort=popular`);
+    r.loading = false;
+    if (res.blocked) r.msg = res.blocked;
+    else if (reactOk(res) && plain(res.data)) { r.mine = []; r.counts = {}; takeReactions(r, res.data); r.loaded = true; }
+    else r.msg = 'Could not load reactions. ' + reactError(res, '').msg;
+    render();
+  }
+  function openReactions(xuid) {
+    const r = reactState(xuid);
+    r.open = !r.open;
+    if (r.open) loadReactions(xuid);   // read afresh every time: you may have reacted on sotrep.com in the meantime
+    else render();
   }
   async function toggleReaction(xuid, type, label) {
     const r = reactState(xuid);
-    if (r.busy) return;
-    if (session.sotrepSignedOut) { r.msg = 'Sign in to sotrep.com to react (button at the top)'; render(); return; }
-    const paused = Math.max(reactPauseUntil, session.pauseUntil || 0);
-    if (Date.now() < paused) { r.msg = `sotrep.com asked us to wait, try again after ${new Date(paused).toLocaleTimeString('en-GB')}`; render(); return; }
+    if (!r.loaded || r.loading || r.busy) return;   // never toggle blind
     r.busy = true; r.msg = ''; render();
-    const wait = lastReactAt + REACT_GAP_MS - Date.now();
-    if (wait > 0) await new Promise(res => setTimeout(res, wait));
-    lastReactAt = Date.now();
-    const res = await sotrepPost(`/api/player/${encodeURIComponent(xuid)}/reactions/${encodeURIComponent(type)}/toggle`);
+    const res = await reactRequest('POST', `/api/player/${encodeURIComponent(xuid)}/reactions/${encodeURIComponent(type)}/toggle`);
     r.busy = false;
-    if (res.status >= 200 && res.status < 300 && !(res.data && res.data.error)) {
+    if (res.blocked) r.msg = res.blocked;   // nothing was sent, so what we know still stands
+    else if (reactOk(res)) {
       const was = r.mine.includes(type);
       r.mine = was ? r.mine.filter(t => t !== type) : [...r.mine, type];
       r.counts[type] = Math.max(0, (r.counts[type] | 0) + (was ? -1 : 1));
       takeReactions(r, res.data);   // if sotrep sends the new state back, trust it over our own count
-    } else r.msg = reactError(res, label);
+    } else {
+      const e = reactError(res, label);
+      r.msg = e.msg;
+      if (!e.keep) r.loaded = false;
+    }
     render();
   }
   function reactRow(xuid) {
     const r = reactState(xuid);
     if (!r.open) return null;
+    let body;
+    if (r.loading) body = h('span', { class: 'note' }, 'Loading…');
+    else if (!r.loaded) body = h('button', { class: 'mini', onclick: () => loadReactions(xuid) }, 'Reload');
+    else body = REACTIONS.map(([type, label]) => {
+      const on = r.mine.includes(type);
+      const b = h('button', { class: 'rchip' + (on ? ' on' : ''), 'aria-pressed': String(on), title: on ? `Take back ${label}` : label, onclick: () => toggleReaction(xuid, type, label) },
+        label, h('span', { class: 'n' }, r.counts[type] | 0));
+      if (r.busy) b.disabled = true;
+      return b;
+    });
     return h('div', { class: 'react', role: 'group', 'aria-label': 'Reactions on sotrep.com' },
-      r.loading ? h('span', { class: 'msg' }, 'Loading…') : REACTIONS.map(([type, label]) => {
-        const on = r.mine.includes(type);
-        const b = h('button', { class: 'rchip' + (on ? ' on' : ''), 'aria-pressed': String(on), title: on ? `Take back ${label}` : label, onclick: () => toggleReaction(xuid, type, label) },
-          label, h('span', { class: 'n' }, r.counts[type] | 0));
-        if (r.busy) b.disabled = true;
-        return b;
-      }),
+      body,
       r.msg ? h('span', { class: 'msg' }, r.msg) : null,
       h('span', { class: 'via' }, 'on sotrep.com'),
     );
