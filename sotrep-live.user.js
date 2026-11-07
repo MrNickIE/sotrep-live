@@ -129,24 +129,27 @@
 
   // ---------- what counts as a session ----------
   // Best: your own Xbox status, which the presence check already reads every 5 minutes (15 when the tab is hidden).
-  // A stretch of checks that say you are playing SoT is one sitting; PLAY_GAP_MS without one ends it. If the board
-  // saw the sitting begin (an earlier check said you were not playing), the session starts then, which splits two
-  // sittings in one evening. If the page opened mid-game, it reaches back to the first meeting as well.
+  // Checks that say you are playing SoT make one sitting. It ends after two "not playing" readings in a row, or
+  // PLAY_END_MS with no playing reading at all, so one late or odd answer from Xbox never splits a sitting. When the
+  // board saw a sitting begin, it starts just after the last reading that said you were not playing, which keeps two
+  // sittings in one evening apart without losing players met before the first playing check. When the page opened
+  // mid-game, it reaches back to the first meeting as well.
   // Fallback, when Xbox shares nothing: a run of meetings with no gap over SESSION_GAP_MS (90 minutes).
-  const PLAY_GAP_MS = 25 * 60e3;   // not seen playing for this long: that sitting is over (hidden-tab checks are 15 min apart)
-  const XBOX_LAG_MS = 10 * 60e3;   // Xbox can be a few minutes late to say you are playing
+  const PLAY_END_MS = 35 * 60e3;   // two hidden-tab checks (15 min apart) plus slack
+  const XBOX_LAG_MS = 10 * 60e3;   // only for sittings saved before the boundary was stored
   function playSpan() {
     const p = state.play;
     if (!p || typeof p !== 'object') return null;
-    const start = Date.parse(p.start), last = Date.parse(p.last);
+    const start = Date.parse(p.start), last = Date.parse(p.last), from = Date.parse(p.from);
     if (!(start > 0) || !(last >= start)) return null;
-    return { start, last, seenStart: p.seenStart === true };
+    const seenStart = p.seenStart === true;
+    return { start, last, seenStart, from: seenStart ? (from > 0 && from <= start ? from : start - XBOX_LAG_MS) : null, offs: p.offs | 0 };
   }
+  const spanPlaying = (sp) => !!sp && Date.now() - sp.last < PLAY_END_MS && sp.offs < 2;
   // hits: [[time, gamertag]] newest first. untilNow: the session has to reach the present (a page load), not just
   // the latest meeting. Returns { start, end, members, playing, xbox } or null.
   function sessionOf(hits, untilNow) {
-    if (!hits.length) return null;
-    const now = Date.now(), end = hits[0][0];
+    const now = Date.now(), end = hits.length ? hits[0][0] : 0;
     const members = new Set();
     let start = end, prev = untilNow ? now : end;
     for (const [t, gt] of hits) {
@@ -155,12 +158,16 @@
     }
     const sp = playSpan();
     if (sp) {
-      const playing = now - sp.last < PLAY_GAP_MS;
-      const covers = untilNow ? playing : end >= sp.start - XBOX_LAG_MS && end <= sp.last + PLAY_GAP_MS;
+      const playing = spanPlaying(sp);
+      const lower = sp.seenStart ? sp.from : sp.start - XBOX_LAG_MS;
+      const covers = playing || (!untilNow && !!hits.length && end > lower && end <= sp.last + PLAY_END_MS);
       if (covers) {
-        if (sp.seenStart) { members.clear(); start = sp.start; } else start = members.size ? Math.min(start, sp.start) : sp.start;
-        for (const [t, gt] of hits) if (t >= sp.start - XBOX_LAG_MS) members.add(gt);
-        return { start, end: playing ? now : Math.max(end, sp.last), members, playing, xbox: true };
+        if (sp.seenStart) members.clear();
+        for (const [t, gt] of hits) if (t > lower) members.add(gt);
+        let first = sp.start;
+        for (const [t, gt] of hits) if (members.has(gt) && t < first) first = t;
+        if (!sp.seenStart && start && start < first) first = start;
+        return { start: first, end: playing ? now : Math.max(end, sp.last), members, playing, xbox: true };
       }
     }
     return members.size ? { start, end, members, playing: false, xbox: false } : null;
@@ -623,17 +630,25 @@
   let meOfflineChecks = 0;
   const saysOffline = (x) => !!x && !x.is_playing && /offline|last seen/i.test(String(x.presence_text || ''));
   // Keeps the current sitting up to date from your Xbox status (see sessionOf). No status at all says nothing.
-  let meNotPlayingAt = 0;
+  let meNotPlayingAt = 0;   // the latest reading that said you were not playing, while no sitting is open
   function notePlaying(x) {
     if (!x) return;
     const now = Date.now(), iso = new Date(now).toISOString();
+    const sp = playSpan();
     if (x.is_playing) {
-      const sp = playSpan();
-      if (sp && now - sp.last <= PLAY_GAP_MS) state.play.last = iso;
-      else state.play = { start: iso, last: iso, seenStart: !!meNotPlayingAt && now - meNotPlayingAt <= PLAY_GAP_MS };
+      if (spanPlaying(sp)) { state.play.last = iso; state.play.offs = 0; save(['play']); return; }
+      // a new sitting. The board saw it begin if a reading said you were not playing shortly before.
+      const offAt = Math.max(meNotPlayingAt, sp && Date.parse(state.play.offAt) || 0);
+      const seen = offAt > 0 && now - offAt <= PLAY_END_MS;
+      state.play = { start: iso, last: iso, seenStart: seen, from: seen ? new Date(offAt).toISOString() : null, offs: 0 };
+      meNotPlayingAt = 0;
       save(['play']);
+      if (seen && listEl) restoreRecent();   // a new sitting with the tab open: the board starts afresh as well
       if (listEl) render();
-    } else if (String(x.presence_text || '').trim()) meNotPlayingAt = now;
+    } else if (String(x.presence_text || '').trim()) {
+      meNotPlayingAt = now;
+      if (sp) { state.play.offs = (state.play.offs | 0) + 1; state.play.offAt = iso; save(['play']); if (listEl) render(); }
+    }
   }
   function showMe(x) {
     if (!meEl) return;
@@ -1335,6 +1350,12 @@
     hits.sort((a, b) => b[0] - a[0]);
     const ses = sessionOf(hits, false);
     if (!ses) return null;
+    if (!ses.members.size) {
+      const hm0 = (t) => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      return h('section', { class: 'recap', 'aria-label': 'This session' },
+        h('div', { class: 'recap-a' }, h('span', { class: 'lbl' }, 'This session'), h('span', { class: 'big' }, 'No one met yet'),
+          h('span', { class: 'sub', title: 'Start comes from your Xbox status' }, `Playing since ${hm0(ses.start)}`)));
+    }
     const { start, end, members } = ses;
     const n = { red: 0, orange: 0, yellow: 0, clean: 0, unchecked: 0 };
     let again = 0, streamers = 0, liveNow = 0, wasLive = 0, worst = null, best = null;

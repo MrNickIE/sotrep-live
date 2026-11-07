@@ -340,6 +340,10 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     const ra = await a.q('.recap').textContent();
     check('session card counts that sitting and says when it began', /2 players/.test(ra) && /Playing since/.test(ra), ra);
     await a.ctx.close();
+    // with the tab hidden, the first playing check can come 15 minutes into a sitting: players met before it still count
+    const a2 = await fresh(browser, withTimes([5, 25, 40, 300, 400, 500], { start: t(20), last: t(2), seenStart: true, from: t(35) }));
+    eq('players met before the first playing check still count', await a2.q('.list .row').count(), 2);
+    await a2.ctx.close();
     // a long quiet spell with no meetings does not split a sitting
     const b = await fresh(browser, withTimes([5, 180, 300, 400, 500, 600], { start: t(200), last: t(1), seenStart: true }));
     eq('a quiet spell over 90 minutes stays one session while you play', await b.q('.list .row').count(), 2);
@@ -363,6 +367,18 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await d.page.waitForTimeout(800);
     eq('then playing: a sitting starts, and the board saw it begin', await d.page.evaluate(() => __store.play && __store.play.seenStart), true);
     check('session card says playing since', /Playing since/.test(await d.q('.recap').textContent()), await d.q('.recap').textContent());
+    const step = (xbl, mins) => d.page.evaluate(([x, m]) => { window.__xbl = x; window.__skew += m * 60e3; document.dispatchEvent(new Event('visibilitychange')); }, [xbl, mins]);
+    const off = { is_playing: false, presence_text: 'Last seen 1m ago: Home' }, on = { is_playing: true, presence_text: 'Sea of Thieves' };
+    const start1 = await d.page.evaluate(() => __store.play.start);
+    await step(off, 15); await d.page.waitForTimeout(500);
+    await step(on, 15); await d.page.waitForTimeout(500);
+    eq('one odd reading mid-game does not split the sitting', await d.page.evaluate(() => __store.play.start), start1);
+    await step(off, 6); await d.page.waitForTimeout(500);
+    await step(off, 6); await d.page.waitForTimeout(500);
+    await step(on, 6); await d.page.waitForTimeout(800);
+    check('two readings in a row end it: the next playing reading starts a new sitting', await d.page.evaluate((s1) => __store.play.start !== s1 && __store.play.seenStart === true, start1), JSON.stringify(await d.page.evaluate(() => __store.play)));
+    eq('with the tab open, the board starts afresh for the new sitting', await d.q('.list .row').count(), 0);
+    check('and the card shows the new sitting straight away', /No one met yet/.test(await d.q('.recap').textContent()) && /Playing since/.test(await d.q('.recap').textContent()), await d.q('.recap').textContent());
     eq('no page errors with Xbox sessions', d.errors, []);
     await d.ctx.close();
   }
