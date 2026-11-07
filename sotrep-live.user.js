@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOTREP Live - players I meet
 // @namespace    https://www.sotrep.com/
-// @version      2.0.2
+// @version      2.1.0
 // @description  Watches the Sea of Thieves "Recently Met" list and shows each newly met player with their SOTREP reputation, live, while you play.
 // @homepageURL  https://github.com/MrNickIE/sotrep-live
 // @updateURL    https://raw.githubusercontent.com/MrNickIE/sotrep-live/main/sotrep-live.meta.js
@@ -28,7 +28,8 @@
   - Any gamertag not seen before is a new encounter. It is looked up on sotrep.com via POST /api/search
     (again your own login) and shown at the top of the board with a colour-coded reputation.
   - Everything is cached locally so a player is only looked up once per CACHE_HOURS.
-  - Players from the current session (no gap over SESSION_GAP_MS, 90 minutes) stay on the board across a page refresh.
+  - Players from the current session stay on the board across a page refresh. A session follows your own Xbox status when
+    it is visible, otherwise it is a run of meetings with no gap over SESSION_GAP_MS (90 minutes). See sessionOf.
   - History view lists every name ever recorded, newest first, with a per-row "Look up" button for anyone
     not yet checked. There is deliberately no bulk lookup, to stay gentle on sotrep.com.
   - Reset needs two presses: the first arms the button for a few seconds, the second fires.
@@ -61,8 +62,9 @@
     inList: GM_getValue('inList', null),           // gamertag -> true for everyone present at the last poll (null until first poll)
     missing: GM_getValue('missing', {}),           // gamertag -> consecutive polls absent from the list
     lives: GM_getValue('lives', {}),               // gamertag -> ISO time a Twitch check last found them live (last 30 days)
+    play: GM_getValue('play', null),               // { start, last, seenStart }: the latest stretch your Xbox status said you were playing SoT
     meets: GM_getValue('meets', {}),               // gamertag -> ISO times you met them (last 30 days, newest last)
-    ui: Object.assign({ theme: 'dark', layout: 'comfortable' }, GM_getValue('ui', {})),
+    ui: Object.assign({ theme: 'dark', layout: 'comfortable', pinRed: true }, GM_getValue('ui', {})),
     lastVersion: GM_getValue('lastVersion', null), // the version that last ran, so "what's new" shows once per update
     alerts: Object.assign(
       { sound: true, discord: '', desktop: false, severe: true, moderate: true, streamers: true },
@@ -125,21 +127,53 @@
   const LIVE_GAP_MS = 2000;           // pause between Twitch page checks
   const LIVE_FIRST_RECHECK_MS = 60e3; // a first check that says not live (or fails) is trusted only this long, once per streamer
 
-  // Restore the whole current session so a refresh does not wipe the board mid-session: newest first, back
-  // until a gap over SESSION_GAP_MS. If the newest is itself older than that, a new session starts empty.
+  // ---------- what counts as a session ----------
+  // Best: your own Xbox status, which the presence check already reads every 5 minutes (15 when the tab is hidden).
+  // A stretch of checks that say you are playing SoT is one sitting; PLAY_GAP_MS without one ends it. If the board
+  // saw the sitting begin (an earlier check said you were not playing), the session starts then, which splits two
+  // sittings in one evening. If the page opened mid-game, it reaches back to the first meeting as well.
+  // Fallback, when Xbox shares nothing: a run of meetings with no gap over SESSION_GAP_MS (90 minutes).
+  const PLAY_GAP_MS = 25 * 60e3;   // not seen playing for this long: that sitting is over (hidden-tab checks are 15 min apart)
+  const XBOX_LAG_MS = 10 * 60e3;   // Xbox can be a few minutes late to say you are playing
+  function playSpan() {
+    const p = state.play;
+    if (!p || typeof p !== 'object') return null;
+    const start = Date.parse(p.start), last = Date.parse(p.last);
+    if (!(start > 0) || !(last >= start)) return null;
+    return { start, last, seenStart: p.seenStart === true };
+  }
+  // hits: [[time, gamertag]] newest first. untilNow: the session has to reach the present (a page load), not just
+  // the latest meeting. Returns { start, end, members, playing, xbox } or null.
+  function sessionOf(hits, untilNow) {
+    if (!hits.length) return null;
+    const now = Date.now(), end = hits[0][0];
+    const members = new Set();
+    let start = end, prev = untilNow ? now : end;
+    for (const [t, gt] of hits) {
+      if (prev - t > SESSION_GAP_MS) break;
+      start = t; prev = t; members.add(gt);
+    }
+    const sp = playSpan();
+    if (sp) {
+      const playing = now - sp.last < PLAY_GAP_MS;
+      const covers = untilNow ? playing : end >= sp.start - XBOX_LAG_MS && end <= sp.last + PLAY_GAP_MS;
+      if (covers) {
+        if (sp.seenStart) { members.clear(); start = sp.start; } else start = members.size ? Math.min(start, sp.start) : sp.start;
+        for (const [t, gt] of hits) if (t >= sp.start - XBOX_LAG_MS) members.add(gt);
+        return { start, end: playing ? now : Math.max(end, sp.last), members, playing, xbox: true };
+      }
+    }
+    return members.size ? { start, end, members, playing: false, xbox: false } : null;
+  }
+  // Restore the whole current session so a refresh does not wipe the board mid-session (see sessionOf).
   // Baseline names (everyone present on the very first poll) are never "recent", whatever their stamp.
   function restoreRecent() {
-    const all = Object.entries(state.seen)
+    const hits = Object.entries(state.seen)
       .filter(([, iso]) => iso !== state.baselineAt && Date.parse(iso) > 0)
-      .sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]));
-    const keep = [];
-    let prev = Date.now();
-    for (const [gt, iso] of all) {
-      const t = Date.parse(iso);
-      if (prev - t > SESSION_GAP_MS || keep.length >= RECENT_MAX) break;
-      keep.push(gt); prev = t;
-    }
-    session.order = keep;
+      .map(([gt, iso]) => [Date.parse(iso), gt])
+      .sort((a, b) => b[0] - a[0]);
+    const s = sessionOf(hits, true);
+    session.order = s ? hits.filter(([, gt]) => s.members.has(gt)).slice(0, RECENT_MAX).map(([, gt]) => gt) : [];
   }
   restoreRecent();
 
@@ -572,6 +606,7 @@
       const paused = (session.pauseUntil && Date.now() < session.pauseUntil) || session.sotrepSignedOut;
       const x = me && !paused ? await sotrepGet(`/api/player/${encodeURIComponent(me.xuid)}/xbl-info`) : null;
       meOfflineChecks = saysOffline(x) ? meOfflineChecks + 1 : 0;
+      notePlaying(x);
       showMe(x);
     } catch (e) {
       showMe(null);
@@ -587,6 +622,19 @@
   const OFFLINE_CHECKS_TO_WARN = 2;
   let meOfflineChecks = 0;
   const saysOffline = (x) => !!x && !x.is_playing && /offline|last seen/i.test(String(x.presence_text || ''));
+  // Keeps the current sitting up to date from your Xbox status (see sessionOf). No status at all says nothing.
+  let meNotPlayingAt = 0;
+  function notePlaying(x) {
+    if (!x) return;
+    const now = Date.now(), iso = new Date(now).toISOString();
+    if (x.is_playing) {
+      const sp = playSpan();
+      if (sp && now - sp.last <= PLAY_GAP_MS) state.play.last = iso;
+      else state.play = { start: iso, last: iso, seenStart: !!meNotPlayingAt && now - meNotPlayingAt <= PLAY_GAP_MS };
+      save(['play']);
+      if (listEl) render();
+    } else if (String(x.presence_text || '').trim()) meNotPlayingAt = now;
+  }
   function showMe(x) {
     if (!meEl) return;
     if (!x) { meEl.style.display = 'none'; return; }
@@ -871,6 +919,7 @@
     if (plain(d.ui)) {
       if (['dark', 'light', 'auto'].includes(d.ui.theme)) state.ui.theme = d.ui.theme;
       if (['comfortable', 'compact'].includes(d.ui.layout)) state.ui.layout = d.ui.layout;
+      if (typeof d.ui.pinRed === 'boolean') state.ui.pinRed = d.ui.pinRed;
     }
     save();
     restoreRecent();
@@ -880,6 +929,11 @@
   // ---------- what's new ----------
   // One short list per release, shown once after an update. A fresh install sees nothing: it has nothing to compare to.
   const WHATS_NEW = {
+    '2.1.0': [
+      'Sessions follow when you actually play. The board reads your Xbox status (the same check as before, no extra requests), so the session card says "Playing since" and two sittings in one evening stay apart. If Xbox hides your status, it falls back to the old rule: a gap of over 90 minutes between meetings.',
+      'Red players stay pinned at the top of Recent for the whole session, under Watch out. Turn it off in Settings, Display.',
+      'If sotrep.com asks for a captcha while you react, the board says so and offers Open sotrep.com, just like lookups.',
+    ],
     '2.0.2': [
       'Reacting is safer: your reactions are read from sotrep.com every time you open React, and the buttons only appear once they are known, so a click can never undo a reaction you left elsewhere.',
       'Reactions on different cards are spaced out properly, and nothing is sent while sotrep.com has asked us to wait.',
@@ -1015,6 +1069,10 @@
 
     const themeCtl = segmented([['dark', 'Dark'], ['light', 'Light'], ['auto', 'Match device']], state.ui.theme, (v) => { state.ui.theme = v; save(['ui']); applyDisplay(); });
     const layoutCtl = segmented([['comfortable', 'Comfortable'], ['compact', 'Compact']], state.ui.layout, (v) => { state.ui.layout = v; save(['ui']); applyDisplay(); });
+    const pinSw = h('input', { type: 'checkbox', class: 'sw', 'aria-label': 'Pin red players to the top of Recent' });
+    pinSw.checked = state.ui.pinRed !== false;
+    pinSw.addEventListener('change', () => { state.ui.pinRed = pinSw.checked; save(['ui']); render(); });
+    const pinRow = h('div', { class: 'setrow' }, h('span', {}, 'Pin red players', h('span', { class: 'hint' }, 'Keep them at the top of Recent for the whole session')), pinSw);
     const backupMsg = h('span', { class: 'msg' });
     const exportBtn = h('button', { class: 'btn' }, 'Export backup');
     exportBtn.addEventListener('click', () => { backupMsg.textContent = exportBackup(); });
@@ -1028,7 +1086,7 @@
       if (f.size > 20e6) { backupMsg.textContent = 'That file is too big to be a backup.'; return; }
       const r = importBackup(await f.text());
       if (r.error) { backupMsg.textContent = r.error; return; }
-      themeCtl.pick(state.ui.theme); layoutCtl.pick(state.ui.layout); applyDisplay();
+      themeCtl.pick(state.ui.theme); layoutCtl.pick(state.ui.layout); pinSw.checked = state.ui.pinRed !== false; applyDisplay();
       backupMsg.textContent = `Imported: ${r.added} new, ${r.updated} updated`;
       render();
     });
@@ -1057,6 +1115,7 @@
       card('display', 'Display', null,
         h('div', { class: 'setrow' }, h('span', {}, 'Theme'), themeCtl),
         h('div', { class: 'setrow' }, h('span', {}, 'Layout', h('span', { class: 'hint' }, 'Compact fits more players on screen')), layoutCtl),
+        pinRow,
       ),
       card('data', 'Your data', 'Everything this tool remembers (who you met, lookups, settings) lives in Tampermonkey in this browser only. Export saves it to a file you keep. Import adds a backup back in and keeps the newer entry on a clash. Your Discord webhook is never put in the file.',
         h('div', { class: 'field' }, exportBtn, importBtn, fileIn), backupMsg,
@@ -1253,8 +1312,17 @@
         : 'Taking baseline…'));
       return;
     }
-    listEl.append(h('div', { class: 'section' }, 'Recent encounters', h('span', {}, session.order.length), h('span', { class: 'note' }, 'Newest first')));
-    for (const gt of session.order) listEl.append(renderRow(gt, false));
+    // red players stay at the top for the whole session, so they do not scroll away as you meet more people
+    const red = state.ui.pinRed !== false ? session.order.filter(gt => repClass(state.cache[gt] && state.cache[gt].rep) === 'severe') : [];
+    const rest = session.order.filter(gt => !red.includes(gt));
+    if (red.length) {
+      listEl.append(h('div', { class: 'section' }, 'Watch out', h('span', {}, red.length), h('span', { class: 'note' }, 'Red players stay at the top for the session')));
+      for (const gt of red) listEl.append(renderRow(gt, false));
+    }
+    if (rest.length) {
+      listEl.append(h('div', { class: 'section' }, red.length ? 'Everyone else' : 'Recent encounters', h('span', {}, rest.length), h('span', { class: 'note' }, 'Newest first')));
+      for (const gt of rest) listEl.append(renderRow(gt, false));
+    }
   }
 
   // ---------- session recap ----------
@@ -1265,14 +1333,9 @@
     const hits = [];
     for (const gt of Object.keys(state.seen)) for (const t of meetList(gt)) hits.push([Date.parse(t), gt]);
     hits.sort((a, b) => b[0] - a[0]);
-    if (!hits.length) return null;
-    const end = hits[0][0];
-    let start = end, prev = end;
-    const members = new Set();
-    for (const [t, gt] of hits) {
-      if (prev - t > SESSION_GAP_MS) break;
-      start = t; prev = t; members.add(gt);
-    }
+    const ses = sessionOf(hits, false);
+    if (!ses) return null;
+    const { start, end, members } = ses;
     const n = { red: 0, orange: 0, yellow: 0, clean: 0, unchecked: 0 };
     let again = 0, streamers = 0, liveNow = 0, wasLive = 0, worst = null, best = null;
     const onAir = [];
@@ -1296,7 +1359,7 @@
     const hm = (t) => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     const mins = Math.max(1, Math.round((end - start) / 60e3));
     const len = mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`;
-    const live = Date.now() - end < 3 * 3600e3;
+    const live = ses.playing || Date.now() - end < 3 * 3600e3;
     const parts = [['red', '--c-sev'], ['orange', '--c-mod'], ['yellow', '--c-lt'], ['clean', '--c-ok'], ['unchecked', '--c-l3']].filter(([k]) => n[k]);
     const key = (k, colour) => h('span', { class: 'k' }, h('span', { class: 'dot', style: `background:var(${colour})` }), h('b', {}, n[k]), ' ' + (k === 'unchecked' ? 'not checked' : k));
     const nameLink = (o, href) => h('a', { class: 'name', href, target: '_blank', rel: 'noopener' }, o.gt);
@@ -1310,7 +1373,8 @@
       h('div', { class: 'recap-a' },
         h('span', { class: 'lbl' }, live ? 'This session' : `Last session, ${dayLabel(new Date(end)).toLowerCase()}`),
         h('span', { class: 'big' }, `${members.size} player${members.size > 1 ? 's' : ''}`),
-        h('span', { class: 'sub' }, `${hm(start)} to ${hm(end)}, ${len}`)),
+        h('span', { class: 'sub', title: ses.xbox ? 'Start and end come from your Xbox status' : 'Worked out from when you met players: a gap of over 90 minutes starts a new session' },
+          ses.playing ? `Playing since ${hm(start)}, ${len}` : `${hm(start)} to ${hm(end)}, ${len}`)),
       h('div', { class: 'recap-b' },
         h('div', { class: 'riskbar', role: 'img', 'aria-label': parts.map(([k]) => `${n[k]} ${k === 'unchecked' ? 'not checked' : k}`).join(', ') },
           parts.map(([k, colour]) => h('span', { style: `flex:${n[k]};background:var(${colour})` }))),
@@ -1589,6 +1653,13 @@
   function reactError(res, label) {
     const err = res.data && res.data.error;
     if (res.status === 401) { if (!session.sotrepSignedOut) { session.sotrepSignedOut = true; refreshStatus(); } return { msg: 'Sign in to sotrep.com to react (button at the top)', keep: false }; }
+    if (res.status === 403 && res.data && res.data.require_captcha) {
+      // the same pause lookups use: the status line offers Open sotrep.com, and coming back to this tab lifts it
+      session.pauseUntil = Date.now() + 300e3; session.pauseFix = true;
+      session.pauseReason = 'sotrep.com wants a captcha: open sotrep.com, search any name there, then come back';
+      refreshStatus();
+      return { msg: 'sotrep.com wants a quick captcha check. Use Open sotrep.com at the top, do it there, then come back and Reload', keep: false };
+    }
     if (err === 'reaction_cooldown') return { msg: `Wait a second before selecting ${label} again`, keep: true };
     if (err === 'account_too_new') return { msg: 'Your sotrep.com account is too new to react yet', keep: true };
     if (err === 'terms_not_accepted') return { msg: 'Accept the sotrep.com terms first: react once on their profile there, then Reload', keep: false };
@@ -1958,7 +2029,7 @@
   }
   function clearSession() { session.order = []; session.queue = []; render(); setStatus(statusLine()); }
   function resetAll() {
-    state.seen = {}; state.cache = {}; state.baselined = false; state.baselineAt = null; state.inList = null; state.missing = {}; state.meets = {}; state.lives = {}; save();
+    state.seen = {}; state.cache = {}; state.baselined = false; state.baselineAt = null; state.inList = null; state.missing = {}; state.meets = {}; state.lives = {}; state.play = null; save();
     session.order = []; session.queue = [];
     poll();
   }

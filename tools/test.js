@@ -82,7 +82,7 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     await q('button.tab:has-text("Compact")').click();
     check('compact layout applied', await q('.root.compact').count() === 1, 'no compact class');
     const stored = await page.evaluate(() => __store.ui);
-    eq('display choice stored', stored, { theme: 'light', layout: 'compact' });
+    eq('display choice stored', stored, { theme: 'light', layout: 'compact', pinRed: true });
 
     // closing settings
     await page.keyboard.press('Escape');   // earlier steps left the panel open
@@ -309,6 +309,96 @@ async function fresh(browser, initial, scheme = 'dark', opts = {}) {
     check('a History search shows the social it matched', (await q('.row:has-text("Player Six") .soc:not(.more)').allTextContents()).some(t => t.includes('alt7')), 'alt7 hidden');
     await q('.filters input[type=text]').fill('');
     eq('no page errors with many socials', errors, []);
+    await ctx.close();
+  }
+
+  // ----- red players pinned to the top -----
+  {
+    const st = demo.store();
+    st.cache['Player Six'].rep = { profile_id: 1, severe_count: 1 };   // the oldest player on the board
+    const { ctx, page, q, errors } = await fresh(browser, st);
+    const names = async () => (await q('.list .row .name').allTextContents());
+    eq('red players first, newest first', (await names()).slice(0, 2), ['Player One', 'Player Six']);
+    check('under a Watch out heading', /Watch out\s*2/.test(await q('.list .section').first().textContent()), await q('.list .section').first().textContent());
+    await q('button[title="Settings"]').click();
+    await q('.sw[aria-label="Pin red players to the top of Recent"]').evaluate(c => c.click());
+    await q('.panel-head button:has-text("Close")').click();
+    eq('switched off: plain newest first', (await names()).slice(-1), ['Player Six']);
+    eq('the choice is kept', await page.evaluate(() => __store.ui.pinRed), false);
+    eq('no page errors with pinning', errors, []);
+    await ctx.close();
+  }
+
+  // ----- sessions follow your Xbox status -----
+  {
+    const t = (m) => new Date(Date.now() - m * 60e3).toISOString();
+    const six = ['Player One', 'Player Two', 'Player Three', 'Player Four', 'Player Five', 'Player Six'];
+    const withTimes = (mins, play) => { const st = demo.store(); st.meets = {}; six.forEach((gt, i) => { st.seen[gt] = t(mins[i]); }); st.play = play; return st; };
+    // the board saw this sitting begin 20 minutes ago: meetings before it belong to the last one, even under 90 minutes apart
+    const a = await fresh(browser, withTimes([5, 15, 60, 100, 130, 400], { start: t(20), last: t(2), seenStart: true }));
+    eq('a sitting the board saw begin keeps only its own players', await a.q('.list .row').count(), 2);
+    const ra = await a.q('.recap').textContent();
+    check('session card counts that sitting and says when it began', /2 players/.test(ra) && /Playing since/.test(ra), ra);
+    await a.ctx.close();
+    // a long quiet spell with no meetings does not split a sitting
+    const b = await fresh(browser, withTimes([5, 180, 300, 400, 500, 600], { start: t(200), last: t(1), seenStart: true }));
+    eq('a quiet spell over 90 minutes stays one session while you play', await b.q('.list .row').count(), 2);
+    await b.ctx.close();
+    // the page opened mid-game: the earlier meetings still count
+    const c = await fresh(browser, withTimes([5, 40, 70, 300, 400, 500], { start: t(10), last: t(1), seenStart: false }));
+    eq('opened mid-game: meetings before the first check still count', await c.q('.list .row').count(), 3);
+    await c.ctx.close();
+    // the board watches you go from not playing to playing
+    const init = `window.__skew = 0; const now = Date.now.bind(Date); Date.now = () => now() + window.__skew;
+      window.__xbl = { is_playing: false, presence_text: 'Last seen 5m ago: Xbox App' };
+      const real = window.GM_xmlhttpRequest; window.GM_xmlhttpRequest = (o) => {
+        if (!o.url.includes('xbl-info')) return real(o);
+        window.__calls.push(o.url);
+        setTimeout(() => o.onload({ status: 200, responseText: JSON.stringify(window.__xbl), responseHeaders: '' }), 20);
+      };`;
+    const d = await fresh(browser, { ...demo.store(), play: null }, 'dark', { initScript: init });
+    await d.page.waitForTimeout(4500);
+    eq('not playing: no sitting yet', await d.page.evaluate(() => __store.play), null);
+    await d.page.evaluate(() => { window.__xbl = { is_playing: true, presence_text: 'Sea of Thieves' }; window.__skew += 6 * 60e3; document.dispatchEvent(new Event('visibilitychange')); });
+    await d.page.waitForTimeout(800);
+    eq('then playing: a sitting starts, and the board saw it begin', await d.page.evaluate(() => __store.play && __store.play.seenStart), true);
+    check('session card says playing since', /Playing since/.test(await d.q('.recap').textContent()), await d.q('.recap').textContent());
+    eq('no page errors with Xbox sessions', d.errors, []);
+    await d.ctx.close();
+  }
+
+  // ----- sotrep.com wants a captcha while you react -----
+  {
+    const st = demo.store();
+    st.cache['Player One'].rep.xuid = 111;
+    const init = `window.__toggle = 403; window.__rx = 0;
+      const real = window.GM_xmlhttpRequest; window.GM_xmlhttpRequest = (o) => {
+        if (/\\/reviews\\?|\\/reactions\\//.test(o.url)) {
+          window.__rx++;
+          const toggle = o.url.includes('/toggle');
+          setTimeout(() => o.onload({ status: toggle ? window.__toggle : 200, responseText: toggle ? '{"require_captcha":true}' : JSON.stringify({ reactions: {}, my_reactions: [] }), responseHeaders: '' }), 20);
+          return;
+        }
+        return real(o);
+      };`;
+    const { ctx, page, q, errors } = await fresh(browser, st, 'dark', { initScript: init });
+    const one = q('.row:has-text("Player One")');
+    await one.locator('.react-btn').click();
+    await page.waitForTimeout(400);
+    await one.locator('.rchip:has-text("Skilled")').click();
+    await page.waitForTimeout(1900);
+    eq('captcha: the status line offers Open sotrep.com', (await q('.status .signin').textContent()).trim(), 'Open sotrep.com');
+    check('captcha: the card says what to do', /captcha/.test(await one.locator('.react').textContent()), await one.locator('.react').textContent());
+    const sent = await page.evaluate(() => __rx);
+    await one.locator('.react button:has-text("Reload")').click();
+    await page.waitForTimeout(1900);
+    eq('captcha: nothing more is sent until you come back', await page.evaluate(() => __rx), sent);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await page.waitForTimeout(300);
+    await one.locator('.react button:has-text("Reload")').click();
+    await page.waitForTimeout(1900);
+    eq('captcha: back on the tab, React works again', await one.locator('.rchip').count(), 4);
+    eq('no page errors on a reaction captcha', errors, []);
     await ctx.close();
   }
 
